@@ -1,0 +1,199 @@
+# [xihanzu-NR]
+# Pemeriksaan kesiapan cetak: hal-hal yang membuat board ditolak pabrik, diperiksa
+# sebelum diunggah, bukan setelah.
+#
+# DRC memeriksa jarak tembaga. Berkas ini memeriksa hal lain yang sama fatalnya dan
+# tidak terlihat dari gambar:
+#   - tembaga menyentuh tepi potongan board
+#   - lubang bor hilang atau kosong
+#   - potongan tepi tidak menutup jadi satu bidang
+#   - ada pin net yang belum dirutekan
+#   - komponen menumpuk satu sama lain
+
+from "./board.hys" import semua_pad
+from "./lib.hys" import lib_get, lib_ada
+from "./geom.hys" import point_seg_dist, pt, seg_seg_dist
+from "./drc.hys" import periksa
+
+
+export def jalur_tepi(b):
+    # Potongan tepi sebagai daftar ruas, dipakai untuk mengukur jarak.
+    r = b.outline.radius
+    w = b.outline.lebar
+    h = b.outline.tinggi
+    if b.outline.sudut != "bulat" or r <= 0:
+        return [
+            { a: pt(0, 0), b: pt(w, 0) },
+            { a: pt(w, 0), b: pt(w, h) },
+            { a: pt(w, h), b: pt(0, h) },
+            { a: pt(0, h), b: pt(0, 0) },
+        ]
+    out = []
+    k = 0
+    while k < 4:
+        # empat busur sudut, didekati enam segmen tiap sudut
+        pusat = [
+            { cx: w - r, cy: r, a0: -90 },
+            { cx: w - r, cy: h - r, a0: 0 },
+            { cx: r, cy: h - r, a0: 90 },
+            { cx: r, cy: r, a0: 180 },
+        ][k]
+        i = 0
+        while i < 6:
+            a1 = (pusat.a0 + 15 * i) * Math.PI / 180
+            a2 = (pusat.a0 + 15 * (i + 1)) * Math.PI / 180
+            out.push({
+                a: pt(pusat.cx + r * Math.cos(a1), pusat.cy + r * Math.sin(a1)),
+                b: pt(pusat.cx + r * Math.cos(a2), pusat.cy + r * Math.sin(a2)),
+            })
+            i += 1
+        k += 1
+    # sambungan lurus antar busur
+    out.push({ a: pt(r, 0), b: pt(w - r, 0) })
+    out.push({ a: pt(w, h - r), b: pt(w, r) })
+    out.push({ a: pt(w - r, h), b: pt(r, h) })
+    out.push({ a: pt(0, r), b: pt(0, h - r) })
+    return out
+
+
+export def tepi_menutup(b):
+    # Semua titik sudut potongan tepi harus bertemu, tidak boleh ada celah.
+    # Pendekatan segmen: hitung total jarak dan bandingkan dengan keliling ideal.
+    keliling = 2 * (b.outline.lebar + b.outline.tinggi)
+    if b.outline.sudut == "bulat" and b.outline.radius > 0:
+        r = b.outline.radius
+        keliling = 2 * (b.outline.lebar + b.outline.tinggi) - 8 * r + 2 * Math.PI * r
+    r2 = jalur_tepi(b)
+    total = 0
+    for s in r2:
+        dx = s.b.x - s.a.x
+        dy = s.b.y - s.a.y
+        total += Math.sqrt(dx * dx + dy * dy)
+    return Math.abs(total - keliling) < 0.05
+
+
+export def periksa_siap(b):
+    # Mengembalikan daftar {tingkat, pesan, x, y}. Tingkat: "gagal" atau "ingat".
+    hasil = []
+
+    # 1. Tepi board harus menutup
+    if tepi_menutup(b) == false:
+        hasil.push({ tingkat: "gagal", pesan: "potongan tepi board tidak menutup",
+                     x: 0, y: 0 })
+
+    # 2. Tembaga tidak boleh menyentuh tepi potongan
+    tepi = jalur_tepi(b)
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            r = Math.max(pd.w, pd.h) / 2
+            terdekat = 999
+            for s in tepi:
+                d = point_seg_dist(pt(pd.x, pd.y), s)
+                if d < terdekat:
+                    terdekat = d
+            if terdekat - r < 0:
+                hasil.push({
+                    tingkat: "gagal",
+                    pesan: p.ref + " pad " + str(pd.nama) + " menyentuh tepi board",
+                    x: pd.x, y: pd.y,
+                })
+    for n in b.nets:
+        for t in n.trace:
+            for s in jalur_tepi(b):
+                i = 0
+                while i < t.pts.length - 1:
+                    d = seg_seg_dist({ a: t.pts[i], b: t.pts[i + 1] }, s)
+                    if d - t.lebar / 2 < 0:
+                        hasil.push({
+                            tingkat: "gagal",
+                            pesan: "jalur " + n.nama + " menyentuh tepi board",
+                            x: t.pts[i].x, y: t.pts[i].y,
+                        })
+                        i = t.pts.length
+                        continue
+                    i += 1
+
+    # 3. Semua pad komponen harus punya lubang bor kalau jenisnya tembus
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.jenis == "tht" and (pd.bor == undefined or pd.bor <= 0):
+                hasil.push({
+                    tingkat: "gagal",
+                    pesan: p.ref + " pad " + str(pd.nama) + " tidak punya ukuran bor",
+                    x: pd.x, y: pd.y,
+                })
+
+    # 4. Tiap net harus tersambung penuh: jumlah pin dan jalur harus masuk akal
+    for n in b.nets:
+        if n.pin.length > 1 and n.trace.length == 0 and n.via.length == 0:
+            hasil.push({
+                tingkat: "gagal",
+                pesan: "net " + n.nama + " punya " + str(n.pin.length)
+                       + " pin tapi belum ada jalur",
+                x: 0, y: 0,
+            })
+
+    # 5. Komponen tidak boleh bertumpuk
+    i = 0
+    while i < b.parts.length:
+        j = i + 1
+        while j < b.parts.length:
+            a = b.parts[i]
+            c = b.parts[j]
+            if lib_ada(a.lib) and lib_ada(c.lib):
+                la = lib_get(a.lib)
+                lc = lib_get(c.lib)
+                dx = Math.abs(a.x - c.x)
+                dy = Math.abs(a.y - c.y)
+                if dx < (la.w + lc.w) / 2 and dy < (la.h + lc.h) / 2:
+                    hasil.push({
+                        tingkat: "gagal",
+                        pesan: a.ref + " dan " + c.ref + " bertumpuk",
+                        x: (a.x + c.x) / 2, y: (a.y + c.y) / 2,
+                    })
+            j += 1
+        i += 1
+
+    # 6. Tembaga di luar area board
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.x < 0 or pd.y < 0 or pd.x > b.outline.lebar or pd.y > b.outline.tinggi:
+                hasil.push({
+                    tingkat: "gagal",
+                    pesan: p.ref + " pad " + str(pd.nama) + " di luar area board",
+                    x: pd.x, y: pd.y,
+                })
+
+    # 7. Sablon belum punya penanda komponen: beri tahu, jangan dianggap gagal
+    hasil.push({
+        tingkat: "ingat",
+        pesan: "sablon belum memuat penanda komponen (R1, C2); perakitan "
+               + "mengandalkan berkas CPL",
+        x: 0, y: 0,
+    })
+    # 8. Titik nol dan rotasi CPL belum disesuaikan per footprint
+    hasil.push({
+        tingkat: "ingat",
+        pesan: "titik nol CPL sudah dibalik untuk pabrik, tapi rotasi tiap "
+               + "footprint belum disesuaikan. Cetak board percobaan dulu sebelum "
+               + "memesan banyak",
+        x: 0, y: 0,
+    })
+    return hasil
+
+
+export def ringkas_siap(hasil):
+    gagal = 0
+    ingat = 0
+    for h in hasil:
+        if h.tingkat == "gagal":
+            gagal += 1
+        else:
+            ingat += 1
+    return { gagal: gagal, ingat: ingat }

@@ -1,0 +1,68 @@
+# [xihanzu-NR]
+# Uji paket cetak: ZIP berisi seluruh berkas, dan pembaca independen bisa membukanya.
+
+import "fs" as fs
+
+from "./zip.mjs" import zip_buat
+from "./gerber.mjs" import gerber_semua
+from "./kit.mjs" import bom, cpl, panduan
+from "./kesiapan.mjs" import periksa_siap, ringkas_siap
+from "./contoh.mjs" import board_contoh_siap
+
+SALAH = 0
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+def paket(b):
+    # Susun seluruh isi paket: 10 lapisan + BOM + CPL + panduan.
+    daftar = []
+    for f in gerber_semua(b):
+        daftar.push(f)
+    daftar.push({ nama: b.meta.nama + "-BOM.csv", isi: bom(b, {}) })
+    daftar.push({ nama: b.meta.nama + "-CPL.csv", isi: cpl(b) })
+    daftar.push({ nama: b.meta.nama + "-BACA.txt", isi: panduan(b) })
+    return daftar
+
+def utama():
+    b = board_contoh_siap()
+    daftar = paket(b)
+    cek("paket berisi 13 berkas", daftar.length == 13, str(daftar.length) + " berkas")
+
+    z = zip_buat(daftar)
+    cek("zip terbentuk", z.length > 1000, str(z.length) + " byte")
+    fs.writeFileSync("/tmp/paket-pcbforge.zip", z)
+
+    # Isi BOM: 5 komponen, 4 kelompok (R1 dan R2 nilainya beda, jadi terpisah)
+    t = bom(b, {})
+    baris = t.split("\n")
+    cek("BOM punya kepala", baris[0].indexOf("Comment") >= 0, baris[0])
+    cek("BOM punya 5 baris data", baris.length >= 6, str(baris.length) + " baris")
+
+    t2 = cpl(b)
+    b2 = t2.split("\n")
+    cek("CPL punya kepala", b2[0].indexOf("Designator") >= 0, b2[0])
+    cek("CPL punya 5 komponen + kepala", b2.length == 7, str(b2.length) + " baris")
+    # Y harus dibalik: R1 di y=7, tinggi board 25, jadi Y pabrik = 18
+    ada_r1 = false
+    for r in b2:
+        if r.indexOf("R1,") == 0:
+            ada_r1 = true
+            cek("CPL membalik Y untuk pabrik", r.indexOf(",18") > 0, r)
+    cek("CPL memuat R1", ada_r1, "")
+
+    h = periksa_siap(b)
+    r = ringkas_siap(h)
+    cek("kesiapan: tidak ada kegagalan", r.gagal == 0, str(r.gagal) + " gagal")
+    cek("kesiapan: ada catatan", r.ingat > 0, str(r.ingat) + " ingat")
+
+    return 0
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1

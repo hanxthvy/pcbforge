@@ -1,0 +1,113 @@
+# [xihanzu-NR]
+# Berkas pendamping untuk perakitan: BOM dan CPL.
+#
+# Gerber membuat board-nya, tapi kalau ingin komponennya sekalian dipateri pabrik
+# butuh dua berkas ini:
+#
+#   BOM  daftar komponen: nilai, penanda, footprint, nomor bagian pemasok
+#   CPL  posisi komponen: penanda, X, Y, sisi, rotasi. Juga disebut pick-and-place.
+#
+# Format kolom di bawah mengikuti yang diminta JLCPCB. Pabrik lain memakai nama kolom
+# yang sedikit berbeda dan mudah disesuaikan.
+
+from "./board.hys" import semua_pad
+from "./lib.hys" import lib_get, lib_ada
+from "./units.hys" import bulat, gabung_daftar
+
+
+export def csv(baris):
+    # Gabung baris jadi CSV. Koma di dalam nilai diberi tanda kutip ganda, sesuai
+    # aturan CSV biasa, supaya satu komponen bernilai "1K, 1%" tidak memecah kolom.
+    out = []
+    for r in baris:
+        sel = []
+        for s in r:
+            t = str(s)
+            if t.indexOf(",") >= 0 or t.indexOf('"') >= 0:
+                t = '"' + t + '"'
+            sel.push(t)
+        out.push(gabung_daftar(sel, ","))
+    return gabung_daftar(out, "\n") + "\n"
+
+
+export def bom(b, nomor_pemasok):
+    # Satu baris per nilai+footprint yang sama, penandanya digabung. Itu yang
+    # diharapkan pabrik: R1 dan R3 yang sama jadi satu baris berisi "R1,R3".
+    kelompok = []
+    for p in b.parts:
+        kunci = p.lib + "|" + str(p.nilai)
+        ketemu = null
+        for k in kelompok:
+            if k.kunci == kunci:
+                ketemu = k
+        if ketemu == null:
+            ketemu = { kunci: kunci, nilai: p.nilai, lib: p.lib, ref: [] }
+            kelompok.push(ketemu)
+        ketemu.ref.push(p.ref)
+
+    baris = [["Comment", "Designator", "Footprint", "LCB Part #"]]
+    for k in kelompok:
+        nomor = "-"
+        if nomor_pemasok[k.lib] != undefined:
+            nomor = nomor_pemasok[k.lib]
+        baris.push([k.nilai, gabung_daftar(k.ref, ","), k.lib, nomor])
+    return csv(baris)
+
+
+export def cpl(b):
+    # Posisi komponen dalam milimeter, koordinat board, titik (0,0) di sudut kiri atas
+    # seperti yang dipakai di seluruh proyek ini.
+    #
+    # Dua catatan jujur yang penting untuk diperiksa sebelum memesan:
+    #
+    # 1. Titik nol. JLCPCB mengukur dari sudut kiri bawah potongan board, sedangkan di
+    #    sini titik nol ada di sudut kiri atas. Selisihnya tinggi board, dan pabrik
+    #    memakainya untuk menaruh komponen. Baris pertama di bawah sudah membalik Y
+    #    supaya sesuai kebiasaan mereka.
+    # 2. Rotasi. Tiap pustaka punya kebiasaan sendiri untuk arah nol derajat, dan
+    #    salah arah berarti komponen terpasang miring. Nilai di sini diteruskan apa
+    #    adanya dari board, tanpa penyesuaian per footprint. Perlu diperiksa dulu
+    #    dengan satu board percobaan sebelum dipakai serius.
+    baris = [["Designator", "Mid X", "Mid Y", "Layer", "Rotation"]]
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        sisi = "Top"
+        if p.side == "B":
+            sisi = "Bottom"
+        y_jlc = b.outline.tinggi - p.y
+        baris.push([p.ref, bulat(p.x, 3), bulat(y_jlc, 3), sisi, p.rot])
+    return csv(baris)
+
+
+export def panduan(b):
+    # Berkas kecil yang menjelaskan isi paket, supaya paham tanpa membuka berkas lain.
+    baris = []
+    baris.push("PCBForge — paket berkas cetak")
+    baris.push("")
+    baris.push("Board        : " + b.meta.nama)
+    baris.push("Ukuran       : " + str(b.outline.lebar) + " x " + str(b.outline.tinggi) + " mm")
+    baris.push("Lapisan      : 2 (atas dan bawah)")
+    baris.push("Komponen     : " + str(b.parts.length))
+    baris.push("Net          : " + str(b.nets.length))
+    baris.push("")
+    baris.push("Isi paket")
+    baris.push("  *_F_Cu.gtl          tembaga atas")
+    baris.push("  *_B_Cu.gbl          tembaga bawah")
+    baris.push("  *_F_Mask.gts        soldermask atas")
+    baris.push("  *_B_Mask.gbs        soldermask bawah")
+    baris.push("  *_F_Silkscreen.gto  sablon atas")
+    baris.push("  *_B_Silkscreen.gbo  sablon bawah")
+    baris.push("  *_F_Paste.gtp       pasta pateri atas")
+    baris.push("  *_B_Paste.gbp       pasta pateri bawah")
+    baris.push("  *_Edge_Cuts.gm1     potongan tepi board")
+    baris.push("  *.drl               lubang bor (Excellon)")
+    baris.push("  *-BOM.csv           daftar komponen")
+    baris.push("  *-CPL.csv           posisi komponen (pick and place)")
+    baris.push("")
+    baris.push("Cara memesan: unggah berkas zip ini ke JLCPCB, pilih PCB, dan " +
+               "lampirkan BOM dan CPL kalau ingin sekalian dipateri.")
+    baris.push("")
+    baris.push("Periksa dulu sebelum memesan: titik nol dan rotasi pada CPL, " +
+               "serta penandaan komponen pada sablon.")
+    return gabung_daftar(baris, "\n") + "\n"
