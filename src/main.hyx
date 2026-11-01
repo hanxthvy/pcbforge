@@ -1,30 +1,46 @@
 # [xihanzu-NR]
-# Halaman utama PCBForge.
+# Halaman editor PCBForge.
 #
-# Tujuannya sekarang: satu halaman yang benar-benar bisa dipakai sampai ke titik
-# "board siap dipesan". Editor kanvas menyusul.
+# Bentuk yang dipilih, dan alasannya:
 #
-# Prinsip tata letak: satu kolom di ponsel, dua kolom di layar lebar. Tidak ada lebar
-# tetap, tidak ada elemen yang hanya bisa disentuh dengan kursor.
+#   - Board disimpan di state React. Editor kanvas (editor.js) menggambar dan
+#     menangkap masukan, lalu memanggil fungsi di sini untuk mengubah board. Ia tidak
+#     menyimpan salinannya sendiri.
+#   - SEMUA perubahan lewat core/cmd.hys, dan tiap perintah diperiksa di atas salinan
+#     dokumen. Kalau ditolak, board yang tampil tetap yang utuh.
+#   - Penangan disimpan sebagai fungsi biasa di tingkat modul yang menerima
+#     (b, setB, ...) sebagai argumen, bukan disimpan di dalam objek. Bentuk objek
+#     sempat dicoba dan gagal: Hydra tidak memanggil lambda yang disimpan sebagai nilai
+#     dict di semua posisi, dan hasilnya "e is not a function" di seluruh halaman.
+#     Argumen eksplisit selalu bekerja.
 
 import "./app.css"
 
 from "react" import useState, useEffect, useMemo, useRef
 from "react-dom/client" import createRoot
 
+from "./editor.js" import papan_alat
 from "./core/lib.hys" import lib_names, lib_get
-from "./core/board.hys" import semua_pad
+from "./core/board.hys" import board_baru, board_salin, cari_part
 from "./core/contoh.hys" import board_contoh_siap
 from "./core/drc.hys" import periksa
+from "./core/conn.hys" import uji as uji_koneksi
 from "./core/kesiapan.hys" import periksa_siap, ringkas_siap
 from "./core/gerber.hys" import gerber_semua
 from "./core/kit.hys" import bom, cpl, panduan
 from "./core/zip.hys" import zip_buat
+from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran
+
+
+def bulat2(v):
+    # Dua desimal cukup untuk koordinat; tanpa ini kolom X/Y menampilkan angka
+    # panjang seperti 12.999999999999998.
+    return Math.round((v or 0) * 100) / 100
+
 
 # ---------- paket cetak ----------
 
 def paket(b):
-    # Seluruh isi satu paket: 10 lapisan Gerber, BOM, CPL, dan panduan singkat.
     daftar = []
     for f in gerber_semua(b):
         daftar.push(f)
@@ -34,13 +50,8 @@ def paket(b):
     return daftar
 
 
-def unduh_paket(b):
-    # SATU berkas. Sebelumnya di sini ada sepuluh unduhan beruntun, dan itu bukan
-    # sekadar kurang rapi: browser memblokir unduhan beruntun, paling parah di ponsel,
-    # jadi berkas yang diterima pengguna bisa tinggal separuh tanpa peringatan apa pun.
-    # Pabrik juga memang meminta satu unggahan berisi seluruh berkas.
-    daftar = paket(b)
-    z = zip_buat(daftar)
+def unduh(b):
+    z = zip_buat(paket(b))
     blob = new Blob([z])
     url = URL.createObjectURL(blob)
     a = document.createElement("a")
@@ -50,255 +61,685 @@ def unduh_paket(b):
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    return daftar.length
+    return paket(b).length
 
 
-# ---------- gambar papan ----------
+# ---------- penangan board ----------
+#
+# Tiap penangan mengembalikan true kalau berhasil. Pemanggil yang menyimpan hasilnya.
 
-def gambar_board(b, kanvas):
-    if kanvas == null:
+def h_pesan(h, setPesan):
+    if h.pesan != "":
+        setPesan(h.pesan)
+        return false
+    setPesan("")
+    return true
+
+
+def h_taruh(b, setB, setTerpilih, setPesan, net, nama):
+    if net == "":
+        setPesan("Pilih net dulu di panel Net sebelum menaruh komponen.")
         return
-    # Gambar ulang mengikuti lebar wadah, jadi tajam di ponsel maupun desktop dan
-    # ikut menyesuaikan saat layar diputar.
-    wadah = kanvas.parentElement
-    if wadah == null:
+    lb = lib_get(nama)
+    h = part_tambah(b, nama, "", lb.w / 2 + 3, lb.h / 2 + 3, 0, "F", nama)
+    if h_pesan(h, setPesan) == false:
         return
-    lebarCss = wadah.clientWidth
-    if lebarCss <= 0:
+    ref = h.b.parts[h.b.parts.length - 1].ref
+    h2 = net_pin(h.b, net, ref, 1)
+    if h2.pesan != "":
+        setPesan(h2.pesan)
         return
-    rasio = Math.min(3, window.devicePixelRatio or 1)
-    # Rasio bidang board, dengan margin
-    rw = b.outline.lebar + 8
-    rh = b.outline.tinggi + 8
-    tinggiCss = Math.round(lebarCss * rh / rw)
-    kanvas.width = Math.round(lebarCss * rasio)
-    kanvas.height = Math.round(tinggiCss * rasio)
-    kanvas.style.height = tinggiCss + "px"
+    setB(h2.b)
+    setTerpilih(ref)
 
-    ctx = kanvas.getContext("2d")
-    skala = kanvas.width / rw
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, kanvas.width, kanvas.height)
-    ctx.setTransform(skala, 0, 0, skala, skala * 4, skala * 4)
 
-    # badan board
-    ctx.fillStyle = "#0d3b2a"
-    ctx.beginPath()
-    ctx.rect(0, 0, b.outline.lebar, b.outline.tinggi)
-    ctx.fill()
-    ctx.strokeStyle = "#5fd39a"
-    ctx.lineWidth = 0.3
-    ctx.stroke()
+def h_hapus(b, setB, setTerpilih, setPesan, ref):
+    if ref == null:
+        setPesan("Pilih komponen dulu.")
+        return
+    h = part_hapus(b, ref)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+        setTerpilih(null)
 
-    # jalur
+
+def h_pindah(b, setB, setPesan, ref, x, y):
+    h = part_pindah(b, ref, x, y)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_geser(b, setB, setPesan, ref, dx, dy):
+    p = cari_part(b, ref)
+    if p == null:
+        setPesan("Pilih komponen dulu.")
+        return
+    h = part_pindah(b, ref, p.x + dx, p.y + dy)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_putar(b, setB, setPesan, ref, d):
+    if ref == null:
+        setPesan("Pilih komponen dulu.")
+        return
+    h = part_putar(b, ref, d)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_sisi(b, setB, setPesan, ref):
+    if ref == null:
+        setPesan("Pilih komponen dulu.")
+        return
+    h = part_sisi(b, ref)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_net_baru(b, setB, setNet, setPesan, nama):
+    h = net_tambah(b, nama)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+        setNet(nama)
+
+
+def h_net_komponen(b, setB, setPesan, ref, nama):
+    if ref == null:
+        setPesan("Pilih komponen dulu.")
+        return
+    h = net_pin(b, nama, ref, 1)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_ukuran(b, setB, setPesan, w, t):
+    h = board_ukuran(b, w, t)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_sudut(b, setB, jenis):
+    c = board_salin(b)
+    c.outline.sudut = jenis
+    setB(c)
+
+
+def h_jalur(b, setB, setPesan, net, layer, lebar, pts):
+    if net == "":
+        setPesan("Pilih net dulu sebelum menggambar jalur.")
+        return
+    h = jalur_tambah(b, net, layer, lebar, pts)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_nilai(b, setB, ref, nilai):
+    p = cari_part(b, ref)
+    if p != null:
+        p.nilai = nilai
+        setB(board_salin(b))
+
+
+def net_komponen(b, ref):
+    if ref == null:
+        return ""
     for n in b.nets:
-        for t in n.trace:
-            ctx.strokeStyle = "#e8b55c"
-            ctx.lineCap = "round"
-            if t.layer == "B":
-                ctx.strokeStyle = "#5b8dee"
-            ctx.lineWidth = t.lebar
-            ctx.beginPath()
-            i = 0
-            while i < t.pts.length:
-                if i == 0:
-                    ctx.moveTo(t.pts[i].x, t.pts[i].y)
-                else:
-                    ctx.lineTo(t.pts[i].x, t.pts[i].y)
-                i += 1
-            ctx.stroke()
-
-    # pad dan badan komponen
-    for p in b.parts:
-        lb = lib_get(p.lib)
-        if lb == null:
-            continue
-        for pd in semua_pad(p, lb):
-            ctx.fillStyle = "#f0d78c"
-            ctx.beginPath()
-            ctx.arc(pd.x, pd.y, Math.max(pd.w, pd.h) / 2, 0, Math.PI * 2)
-            ctx.fill()
-        ctx.strokeStyle = "rgba(226,232,240,0.55)"
-        ctx.lineWidth = 0.16
-        ctx.strokeRect(p.x - lb.w / 2, p.y - lb.h / 2, lb.w, lb.h)
-        ctx.fillStyle = "#cbd5e1"
-        ctx.font = "1.7px ui-sans-serif, system-ui, sans-serif"
-        ctx.fillText(p.ref, p.x - lb.w / 2, p.y - lb.h / 2 - 0.9)
-
-    # via
-    for n in b.nets:
-        for v in n.via:
-            ctx.fillStyle = "#aab4c8"
-            ctx.beginPath()
-            ctx.arc(v.x, v.y, v.diameter / 2, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.fillStyle = "#0f1115"
-            ctx.beginPath()
-            ctx.arc(v.x, v.y, v.bor / 2, 0, Math.PI * 2)
-            ctx.fill()
+        for q in n.pin:
+            if q.ref == ref:
+                return n.nama
+    return ""
 
 
-# ---------- komponen tampilan ----------
+# ---------- sambungan ke editor kanvas ----------
+
+def sambung_alat(kanvas, rujukan, setTerpilih, setPesan, setB):
+    # Dipasang SEKALI. Semua callback membaca rujukan.current, jadi selalu melihat
+    # nilai terbaru, bukan nilai dari render pertama. Tanpa ini, alat yang dipilih
+    # pengguna tidak berpengaruh apa pun.
+    alat = papan_alat(kanvas, {
+        board: rujukan.current.b(),
+        tinggiCss: 560,
+        ubah: lambda h, diam: rujukan.current.pakai(h, diam),
+        pindah: lambda ref, x, y: rujukan.current.pakai(
+            part_pindah(rujukan.current.b(), ref, x, y), true),
+        hapusRef: lambda ref: rujukan.current.pakai(
+            part_hapus(rujukan.current.b(), ref), false),
+        gambarJalur: lambda net, lap, lb, pts: rujukan.current.pakai(
+            jalur_tambah(rujukan.current.b(), net, lap, lb, pts), false),
+        pilih: lambda ref: rujukan.current.pilih(ref),
+        status: lambda: rujukan.current.status(),
+        pesan: lambda m: rujukan.current.lihat(m),
+        koor: lambda p: rujukan.current.koor(p),
+    })
+    return alat
+
+
+# ---------- tampilan ----------
 
 component Kartu(judul, anak):
     section(className="kartu"):
-        h2(className="judul"): judul
+        if judul != "":
+            h2(className="judul"): judul
         div(className="isi"):
             slot
 
 
-component Baris(nama, nilai):
-    div(className="baris"):
-        span(className="kunci"): nama
-        span(className="nilai"): nilai
+component BarisTombol(aktif, onClick, kiri, kanan):
+    button(className=("baris-tombol" + (" terpilih" if aktif else "")), onClick=onClick):
+        span(className="kunci"): kiri
+        span(className="nilai kecil"): kanan
 
 
-component Papan(b):
-    kanvasRef = useRef(null)
-    [besar, setBesar] = useState(false)
-    kanvasBesarRef = useRef(null)
-
-    useEffect(lambda: gambar_board(b, kanvasRef.current), [b])
-    useEffect(lambda: pengamat_ukuran(b, kanvasRef.current), [b])
-
-    # Di ponsel, papan 40 mm pada lebar 366 px bikin tulisan penanda jadi sangat
-    # kecil. Karena itu papan bisa disentuh untuk diperbesar, dan lapisan besarnya
-    # bisa ditutup dengan tombol, sentuhan di luar, atau tombol Escape.
-    # Ditulis sebagai lambda, BUKAN hasil pemanggilannya: useEffect menuntut fungsinya
-    # sendiri sebagai argumen pertama. Menulis  `tutup_dengan_escape(...)`  membuat
-    # React memanggil nilai kembaliannya (undefined saat belum terbuka), dan React
-    # langsung berhenti dengan "e is not a function" di seluruh halaman.
-    useEffect(lambda: tutup_dengan_escape(besar, setBesar), [besar])
-    useEffect(lambda: gambar_board(b, kanvasBesarRef.current), [besar])
-
+component PanelPustaka(taruh):
+    [cari, setCari] = useState("")
+    semua = lib_names()
+    tampil = []
+    for n in semua:
+        if cari == "" or n.toLowerCase().indexOf(cari.toLowerCase()) >= 0:
+            tampil.push(n)
     div:
-        div(className="papan-bungkus dapat-disentuh", role="button",
-            tabindex="0", onClick=lambda: setBesar(true),
-            onKeyDown=lambda e: setBesar(true if (e.key == "Enter") else besar)):
-            canvas(ref=kanvasRef, className="papan")
-        p(className="dim kecil petunjuk"):
-            "Sentuh papan untuk memperbesar."
-        div(className="legenda"):
-            span(className="tanda t-atas"): "tembaga atas"
-            span(className="tanda t-bawah"): "tembaga bawah"
-            span(className="tanda t-pad"): "pad"
-            span(className="tanda t-via"): "via"
-        if besar:
-            div(className="selubung", onClick=lambda: setBesar(false)):
-                div(className="sorot", onClick=lambda e: hentikan(e)):
-                    div(className="sorot-kepala"):
-                        span(className="dim kecil"):
-                            f"{b.meta.nama} · {b.outline.lebar} × {b.outline.tinggi} mm"
-                        button(className="tutup", onClick=lambda: setBesar(false)):
-                            "Tutup"
-                    div(className="papan-bungkus"):
-                        canvas(ref=kanvasBesarRef, className="papan")
+        input(className="masuk", placeholder="Cari footprint…", value=cari,
+              onChange=lambda ev: setCari(ev.target.value))
+        div(className="daftar-gulir"):
+            for n in tampil:
+                BarisTombol(aktif=false, onClick=lambda: taruh(n),
+                            kiri=n, kanan=f"{lib_get(n).pad.length} pad")
+        if tampil.length == 0:
+            p(className="dim kecil"): "Tidak ada yang cocok."
 
 
-def hentikan(e):
-    # Klik di dalam sorotan tidak boleh menutup lapisannya.
-    e.stopPropagation()
+component PanelProperti(b, terpilih, geser, putar, sisi, hapus, netkan, setNilai):
+    p = cari_part(b, terpilih) if terpilih != null else null
+    div:
+        if p == null:
+            p(className="dim"): "Belum ada yang dipilih. Klik komponen di kanvas."
+        else:
+            p(className="dim kecil"): p.lib + " · " + ("bawah" if p.side == "B" else "atas")
+            div(className="masuk-baris"):
+                label(className="label"): "Nilai"
+                input(className="masuk", value=p.nilai,
+                      onChange=lambda ev: setNilai(p.ref, ev.target.value))
+            div(className="dua-kolom"):
+                div(className="masuk-baris"):
+                    label(className="label pendek"): "X"
+                    input(className="masuk angka", type="number", step="0.5", value=bulat2(p.x),
+                          onChange=lambda ev: geser(p.ref, (parseFloat(ev.target.value) or p.x) - p.x, 0))
+                div(className="masuk-baris"):
+                    label(className="label pendek"): "Y"
+                    input(className="masuk angka", type="number", step="0.5", value=bulat2(p.y),
+                          onChange=lambda ev: geser(p.ref, 0, (parseFloat(ev.target.value) or p.y) - p.y))
+            div(className="tombol-deret"):
+                button(className="kecil-tombol", onClick=lambda: putar(p.ref, 90)): "Putar 90°"
+                button(className="kecil-tombol", onClick=lambda: putar(p.ref, -90)): "−90°"
+            div(className="tombol-deret"):
+                button(className="kecil-tombol", onClick=lambda: sisi(p.ref)): "Balik sisi"
+                button(className="kecil-tombol bahaya", onClick=lambda: hapus(p.ref)): "Hapus"
+            div(className="geser-cepat"):
+                button(className="kecil-tombol", onClick=lambda: geser(p.ref, 0, -0.5)): "↑"
+                button(className="kecil-tombol", onClick=lambda: geser(p.ref, 0, 0.5)): "↓"
+                button(className="kecil-tombol", onClick=lambda: geser(p.ref, -0.5, 0)): "←"
+                button(className="kecil-tombol", onClick=lambda: geser(p.ref, 0.5, 0)): "→"
+            p(className="dim kecil"): "Tiap tekan menggeser 0.5 mm, mengikuti kisi."
+            div(className="masuk-baris"):
+                label(className="label"): "Net"
+                div(className="segmen gulir-samping"):
+                    for n in b.nets:
+                        button(className=("seg" + (" aktif" if net_komponen(b, p.ref) == n.nama else "")),
+                               onClick=lambda: netkan(p.ref, n.nama)): n.nama
 
 
-def tutup_dengan_escape(besar, setBesar):
-    if besar == false:
+component PanelPeriksa(b):
+    temuan = useMemo(lambda: periksa(b), [b])
+    koneksi = useMemo(lambda: uji_koneksi(b), [b])
+    hasil = useMemo(lambda: periksa_siap(b), [b])
+    r = ringkas_siap(hasil)
+    div:
+        if temuan.length == 0 and koneksi.length == 0 and r.gagal == 0:
+            p(className="ok"): "Siap dicetak. Tidak ada yang menghalangi."
+        if temuan.length > 0:
+            p(className="buruk"): f"{temuan.length} masalah aturan"
+            for t in temuan:
+                div(className="temuan"):
+                    span(className="tanda-gagal"): t.jenis
+                    span: t.pesan
+        if koneksi.length > 0:
+            p(className="buruk"): f"{koneksi.length} jalur menggantung"
+            for t in koneksi:
+                div(className="temuan"):
+                    span(className="tanda-gagal"): "koneksi"
+                    span: t
+        if r.gagal > 0:
+            for h in hasil:
+                if h.tingkat == "gagal":
+                    div(className="temuan"):
+                        span(className="tanda-gagal"): "gagal"
+                        span: h.pesan
+        if r.gagal == 0 and r.ingat > 0:
+            for h in hasil:
+                if h.tingkat != "gagal":
+                    div(className="temuan"):
+                        span(className="tanda-ingat"): "ingat"
+                        span: h.pesan
+
+
+component Editor():
+    [b, setB] = useState(lambda: board_contoh_siap())
+    [terpilih, setTerpilih] = useState(null)
+    [mode, setMode] = useState("pilih")
+    [layer, setLayer] = useState("F")
+    [lebar, setLebar] = useState(0.4)
+    [netAktif, setNetAktif] = useState("VCC")
+    [pesan, setPesan] = useState("")
+    [tab, setTab] = useState("komponen")
+    [layar, setLayar] = useState("kanvas")
+    [kisi, setKisi] = useState(0.5)
+    [snap, setSnap] = useState(true)
+    [tampil, setTampil] = useState("ABVG")
+    [koordinat, setKoordinat] = useState({ x: 0, y: 0 })
+    [riwayat, setRiwayat] = useState([])
+    [depan, setDepan] = useState([])
+
+    kanvasRef = useRef(null)
+    alatRef = useRef(null)
+    rujukan = useRef(null)
+    # Riwayat di ref, bukan state: menaruh board di state akan memicu render ulang
+    # setiap langkah, dan riwayatnya sendiri berisi board (besar).
+    hist = useRef({ lampau: [], depan: [] })
+
+    # Rujukan yang selalu segar: dipasang ulang di setiap render, jadi callback yang
+    # dipasang sekali (editor kanvas, papan tombol) tidak pernah membaca nilai basi.
+    rujukan.current = {
+        b: lambda: b,
+        pilih: lambda ref: setTerpilih(ref),
+        lihat: lambda m: setPesan(m),
+        status: lambda: { mode: mode, layer: layer, lebar: lebar, net: netAktif },
+        pakai: lambda h, diam: pakai_r(h, b, diam, setB, setPesan, hist),
+        koor: lambda p: setKoordinat(p),
+        undo: lambda: undo_r(rujukan.current.b(), hist, setB, setPesan),
+        redo: lambda: redo_r(rujukan.current.b(), hist, setB, setPesan),
+    }
+
+    useEffect(lambda: pasang(kanvasRef.current, rujukan, alatRef), [])
+    useEffect(lambda: sinkron(alatRef.current, b), [b])
+    useEffect(lambda: set_mode(alatRef.current, mode), [mode])
+    useEffect(lambda: set_jalur(alatRef.current, layer, lebar, netAktif), [layer, lebar, netAktif])
+    useEffect(lambda: set_pilih(alatRef.current, terpilih), [terpilih])
+    useEffect(lambda: pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan), [])
+    useEffect(lambda: atur_kisi(alatRef.current, kisi, snap), [kisi, snap])
+    useEffect(lambda: atur_tampil(alatRef.current, tampil), [tampil])
+    useEffect(lambda: atur_tanda(alatRef.current, temuan_bertanda(b)), [b])
+
+    div(className="kerja"):
+        header(className="kerja-kepala"):
+            div(className="kepala-kiri"):
+                span(className="merek"): "PCBForge"
+                span(className="kepala-info dim kecil"):
+                    f"{b.outline.lebar}×{b.outline.tinggi} mm · {b.parts.length} komponen · {b.nets.length} net"
+            div(className="kepala-kanan"):
+                button(className="kecil-tombol", onClick=lambda: muat_contoh(setB, setTerpilih, setPesan)):
+                    "Muat contoh"
+                button(className="kecil-tombol", onClick=lambda: kosongkan(setB, setTerpilih, setPesan)):
+                    "Board baru"
+                button(className="utama kecil-tombol", onClick=lambda: setPesan(f"{unduh(b)} berkas dikemas dalam satu zip")):
+                    "Unduh cetak"
+
+        div(className="tab-layar"):
+            button(className=("tl" + (" aktif" if layar == "alat" else "")),
+                   onClick=lambda: setLayar("alat")): "Kiri"
+            button(className=("tl" + (" aktif" if layar == "kanvas" else "")),
+                   onClick=lambda: setLayar("kanvas")): "Kanvas"
+            button(className=("tl" + (" aktif" if layar == "atur" else "")),
+                   onClick=lambda: setLayar("atur")): "Kanan"
+
+        div(className=("kerja-isi layar-" + layar)):
+            aside(className="kerja-kiri"):
+                Kartu(judul="Alat"):
+                    div(className="segmen lebar"):
+                        button(className=("seg" + (" aktif" if mode == "pilih" else "")),
+                               onClick=lambda: setMode("pilih"), title="Pilih dan geser (V)"): "Pilih"
+                        button(className=("seg" + (" aktif" if mode == "jalur" else "")),
+                               onClick=lambda: setMode("jalur"), title="Gambar jalur (W)"): "Jalur"
+                        button(className=("seg" + (" aktif" if mode == "hapus" else "")),
+                               onClick=lambda: setMode("hapus"), title="Hapus komponen (X)"): "Hapus"
+                    if mode == "jalur":
+                        div(className="masuk-baris"):
+                            label(className="label"): "Lapisan"
+                            div(className="segmen"):
+                                button(className=("seg" + (" aktif" if layer == "F" else "")),
+                                       onClick=lambda: setLayer("F")): "Atas"
+                                button(className=("seg" + (" aktif" if layer == "B" else "")),
+                                       onClick=lambda: setLayer("B")): "Bawah"
+                        div(className="masuk-baris"):
+                            label(className="label"): f"Lebar {lebar} mm"
+                            input(type="range", min="0.2", max="2.5", step="0.05", value=lebar,
+                                  onChange=lambda ev: setLebar(parseFloat(ev.target.value)))
+                        if netAktif == "":
+                            p(className="buruk kecil"):
+                                "Pilih net dulu. Jalur tanpa net ditolak pemeriksaan."
+                        else:
+                            p(className="dim kecil"):
+                                f"Masuk ke net {netAktif}, lapisan {layer}. Klik untuk "
+                                "menambah titik; klik ganda atau klik kanan untuk selesai."
+                    else:
+                        p(className="dim kecil"):
+                            "Klik komponen untuk memilih, geser untuk memindah. "
+                            "R memutar 90°, Delete menghapus, Escape membatalkan."
+                Kartu(judul="Net"):
+                    PanelNet(b=b, netAktif=netAktif, setNetAktif=setNetAktif,
+                             tambah=lambda nama: h_net_baru(b, setB, setNetAktif, setPesan, nama))
+                Kartu(judul="Pustaka"):
+                    PanelPustaka(taruh=lambda n: h_taruh(b, setB, setTerpilih, setPesan, netAktif, n))
+                Kartu(judul="Lapisan & kisi"):
+                    div(className="tombol-lapisan"):
+                        button(className=("lap" + (" aktif" if tampil.indexOf("A") >= 0 else "")),
+                               onClick=lambda: setTampil(putar_tampil(tampil, "A")),
+                               title="Tampilkan/sembunyikan tembaga atas"): "Atas"
+                        button(className=("lap" + (" aktif" if tampil.indexOf("B") >= 0 else "")),
+                               onClick=lambda: setTampil(putar_tampil(tampil, "B")),
+                               title="Tampilkan/sembunyikan tembaga bawah"): "Bawah"
+                        button(className=("lap" + (" aktif" if tampil.indexOf("V") >= 0 else "")),
+                               onClick=lambda: setTampil(putar_tampil(tampil, "V")),
+                               title="Tampilkan/sembunyikan via"): "Via"
+                        button(className=("lap" + (" aktif" if tampil.indexOf("G") >= 0 else "")),
+                               onClick=lambda: setTampil(putar_tampil(tampil, "G")),
+                               title="Tampilkan/sembunyikan kisi"): "Kisi"
+                    div(className="masuk-baris"):
+                        label(className="label"): "Ukuran kisi"
+                        div(className="segmen"):
+                            for g in [0.25, 0.5, 1, 2.54]:
+                                button(className=("seg" + (" aktif" if kisi == g else "")),
+                                       onClick=lambda: setKisi(g)): f"{g}"
+                Kartu(judul="Ukuran board"):
+                    div(className="masuk-baris"):
+                        label(className="label"): "Lebar (mm)"
+                        input(className="masuk", type="number", min="10", step="5",
+                              value=b.outline.lebar,
+                              onChange=lambda ev: h_ukuran(b, setB, setPesan,
+                                                           parseFloat(ev.target.value) or b.outline.lebar,
+                                                           b.outline.tinggi))
+                    div(className="masuk-baris"):
+                        label(className="label"): "Tinggi (mm)"
+                        input(className="masuk", type="number", min="10", step="5",
+                              value=b.outline.tinggi,
+                              onChange=lambda ev: h_ukuran(b, setB, setPesan, b.outline.lebar,
+                                                           parseFloat(ev.target.value) or b.outline.tinggi))
+                    div(className="masuk-baris"):
+                        label(className="label"): "Sudut tepi"
+                        div(className="segmen"):
+                            button(className=("seg" + (" aktif" if b.outline.sudut != "bulat" else "")),
+                                   onClick=lambda: h_sudut(b, setB, "lurus")): "Lurus"
+                            button(className=("seg" + (" aktif" if b.outline.sudut == "bulat" else "")),
+                                   onClick=lambda: h_sudut(b, setB, "bulat")): "Bulat"
+
+            main(className="kerja-tengah"):
+                div(className="kanvas-bungkus"):
+                    canvas(ref=kanvasRef, className="kanvas")
+                div(className="status"):
+                    span(className="status-baris"):
+                        span(className="status-kunci"): "X"
+                        span(className="status-angka"): f"{bulat2(koordinat.x)} mm"
+                    span(className="status-baris"):
+                        span(className="status-kunci"): "Y"
+                        span(className="status-angka"): f"{bulat2(koordinat.y)} mm"
+                    span(className="status-baris"):
+                        span(className="status-kunci"): "Kisi"
+                        span(className="status-angka"): f"{kisi} mm"
+                    span(className="status-baris"):
+                        span(className="status-kunci"): "Alat"
+                        span(className="status-angka"): mode
+                    span(className="status-kanan"):
+                        button(className=("kecil-tombol" + (" aktif" if snap else "")),
+                               onClick=lambda: setSnap(not snap),
+                               title="Tempelkan ke kisi"): "Snap"
+                        button(className="kecil-tombol", onClick=lambda: undo_r2(rujukan, setB, setPesan),
+                               title="Batalkan (Ctrl+Z)"): "Undo"
+                        button(className="kecil-tombol", onClick=lambda: redo_r2(rujukan, setB, setPesan),
+                               title="Ulangi (Ctrl+Y)"): "Redo"
+                        button(className="kecil-tombol", onClick=lambda: zoom(alatRef.current, 1.25)): "+"
+                        button(className="kecil-tombol", onClick=lambda: zoom(alatRef.current, 0.8)): "−"
+                        button(className="kecil-tombol", onClick=lambda: paskan(alatRef.current)): "Paskan"
+                if pesan != "":
+                    div(className="pesan", onClick=lambda: setPesan("")): pesan
+
+            aside(className="kerja-kanan"):
+                Kartu(judul=""):
+                    div(className="tab"):
+                        button(className=("tab-t" + (" aktif" if tab == "komponen" else "")),
+                               onClick=lambda: setTab("komponen")): "Komponen"
+                        button(className=("tab-t" + (" aktif" if tab == "periksa" else "")),
+                               onClick=lambda: setTab("periksa")): "Periksa"
+                    if tab == "komponen":
+                        PanelProperti(
+                            b=b, terpilih=terpilih,
+                            geser=lambda ref, dx, dy: h_geser(b, setB, setPesan, ref, dx, dy),
+                            putar=lambda ref, d: h_putar(b, setB, setPesan, ref, d),
+                            sisi=lambda ref: h_sisi(b, setB, setPesan, ref),
+                            hapus=lambda ref: h_hapus(b, setB, setTerpilih, setPesan, ref),
+                            netkan=lambda ref, nama: h_net_komponen(b, setB, setPesan, ref, nama),
+                            setNilai=lambda ref, v: h_nilai(b, setB, ref, v))
+                    else:
+                        PanelPeriksa(b=b)
+                Kartu(judul="Daftar"):
+                    div(className="daftar-gulir"):
+                        for p in b.parts:
+                            BarisTombol(aktif=(p.ref == terpilih),
+                                        onClick=lambda: setTerpilih(p.ref),
+                                        kiri=p.ref, kanan=p.lib + " · " + str(p.nilai))
+
+
+component PanelNet(b, netAktif, setNetAktif, tambah):
+    [nama, setNama] = useState("")
+    div:
+        div(className="baris-masuk"):
+            input(className="masuk", placeholder="Nama net baru", value=nama,
+                  onChange=lambda ev: setNama(ev.target.value))
+            button(className="kecil-tombol", onClick=lambda: (tambah(nama), setNama(""))):
+                "Tambah"
+        div(className="daftar-gulir pendek"):
+            for n in b.nets:
+                BarisTombol(aktif=(n.nama == netAktif), onClick=lambda: setNetAktif(n.nama),
+                            kiri=n.nama,
+                            kanan=f"{n.pin.length} pin · {n.trace.length} jalur")
+
+
+# ---------- pemasangan ----------
+
+def putar_tampil(tampil, huruf):
+    # Menyalakan atau mematikan satu huruf di dalam penanda tampilan.
+    if tampil.indexOf(huruf) >= 0:
+        return tampil.split(huruf).join("")
+    return tampil + huruf
+
+
+def undo_r2(rujukan, setB, setPesan):
+    rujukan.current.undo()
+
+
+def redo_r2(rujukan, setB, setPesan):
+    rujukan.current.redo()
+
+
+def temuan_bertanda(b):
+    # Gabungan temuan aturan dan jalur menggantung, supaya kanvas bisa menandainya.
+    out = []
+    for t in periksa(b):
+        out.push({ x: t.x, y: t.y, jenis: t.jenis, tingkat: "gagal" })
+    for t in uji_koneksi(b):
+        out.push({ x: 0, y: 0, jenis: "koneksi", tingkat: "gagal" })
+    return out
+
+
+def atur_kisi(alat, kisi, snap):
+    if alat != null:
+        alat.setKisi(kisi, snap)
+
+
+def atur_tampil(alat, tampil):
+    if alat != null:
+        alat.setTampil(tampil.indexOf("A") >= 0, tampil.indexOf("B") >= 0,
+                       tampil.indexOf("V") >= 0, tampil.indexOf("G") >= 0)
+
+
+def atur_tanda(alat, tanda):
+    if alat != null:
+        alat.setTanda(tanda)
+
+
+def urungkan():
+    None
+
+
+def ulangi():
+    None
+
+
+def pakai(h, diam, setB, setPesan, setTerpilih):
+    if h.pesan != "":
+        setPesan(h.pesan)
         return
-    def pada_tombol(e):
-        if e.key == "Escape":
-            setBesar(false)
-    document.addEventListener("keydown", pada_tombol)
-    return lambda: document.removeEventListener("keydown", pada_tombol)
+    if h.b != null:
+        setB(h.b)
+    if diam == false:
+        setPesan("")
 
 
-def pengamat_ukuran(b, kanvas):
-    # Gambar ulang saat wadah berubah lebar: ponsel diputar, jendela diubah.
+def pakai_r(h, b_lama, diam, setB, setPesan, hist):
+    # Sama dengan pakai(), tapi menyimpan board sebelumnya untuk undo.
+    if h.pesan != "":
+        setPesan(h.pesan)
+        return
+    if h.b != null:
+        hist.current.lampau.push(b_lama)
+        hist.current.depan = []
+        setB(h.b)
+    if diam == false:
+        setPesan("")
+
+
+def undo_r(b_kini, hist, setB, setPesan):
+    if hist.current.lampau.length == 0:
+        setPesan("Tidak ada yang bisa dibatalkan.")
+        return
+    sisa = hist.current.lampau.slice(0, hist.current.lampau.length - 1)
+    sebelum = hist.current.lampau[hist.current.lampau.length - 1]
+    hist.current.lampau = sisa
+    hist.current.depan.push(b_kini)
+    setB(sebelum)
+    setPesan("")
+
+
+def redo_r(b_kini, hist, setB, setPesan):
+    if hist.current.depan.length == 0:
+        setPesan("Tidak ada yang bisa diulang.")
+        return
+    sisa = hist.current.depan.slice(0, hist.current.depan.length - 1)
+    sesudah = hist.current.depan[hist.current.depan.length - 1]
+    hist.current.depan = sisa
+    hist.current.lampau.push(b_kini)
+    setB(sesudah)
+    setPesan("")
+
+
+def pasang(kanvas, rujukan, alatRef):
     if kanvas == null:
         return
-    obs = new ResizeObserver(lambda: gambar_board(b, kanvas))
+    # Pemasangan ganda berbahaya: kanvas akan punya dua set pendengar, satu klik
+    # diproses dua kali, dan alat yang lebih tua bisa masih memegang callback lama
+    # (itu muncul sebagai "TypeError: (void 0) is not a function" dari dalam kanvas).
+    if alatRef.current != null:
+        return
+    alat = sambung_alat(kanvas, rujukan, null, null, null)
+    alatRef.current = alat
+    rujukan.current.alat = alat
+    window.__alat = alat  # sementara: untuk pemeriksaan di peramban
+    alat.ukur()
+    alat.paskan()
+    obs = new ResizeObserver(lambda: alat.ukur())
     obs.observe(kanvas.parentElement)
     return lambda: obs.disconnect()
 
 
-component TombolGerber(b):
-    [pesan, setPesan] = useState("")
-    div:
-        button(className="utama", onClick=lambda: setPesan(tandai_unduh(b))):
-            "Unduh berkas cetak"
-        p(className="dim kecil"):
-            "Satu berkas zip: 10 lapisan Gerber, BOM, CPL, dan keterangan. "
-        if pesan:
-            p(className="ok kecil"): pesan
+def sinkron(alat, b):
+    if alat != null:
+        alat.setBoard(b)
 
 
-def tandai_unduh(b):
-    n = unduh_paket(b)
-    return f"{n} berkas dikemas dalam satu zip"
+def set_mode(alat, m):
+    if alat != null:
+        alat.setMode(m)
 
 
-component PanelSiap(b):
-    hasil = useMemo(lambda: periksa_siap(b), [b])
-    r = ringkas_siap(hasil)
-    div:
-        if r.gagal == 0:
-            p(className="ok"): "Siap dicetak. Tidak ada masalah yang menghalangi."
-        else:
-            p(className="buruk"): f"{r.gagal} masalah harus diperbaiki dulu"
-        for h in hasil:
-            if h.tingkat == "gagal":
-                div(className="temuan"):
-                    span(className="tanda-gagal"): "gagal"
-                    span: h.pesan
-        for h in hasil:
-            if h.tingkat != "gagal":
-                div(className="temuan"):
-                    span(className="tanda-ingat"): "ingat"
-                    span: h.pesan
+def set_jalur(alat, layer, lebar, net):
+    if alat != null:
+        alat.layer = layer
+        alat.lebar = lebar
+        alat.netAktif = net
 
 
-component App():
-    b = useMemo(board_contoh_siap, [])
-    temuan = useMemo(lambda: periksa(b), [b])
+def set_pilih(alat, ref):
+    if alat != null:
+        alat.terpilih = ref
+        alat.gambar()
 
-    div(className="shell"):
-        header(className="kepala"):
-            div(className="merek"): "PCBForge"
-            p(className="dim"):
-                f"Board contoh {b.outline.lebar} × {b.outline.tinggi} mm, dua lapis, "
-                f"{b.parts.length} komponen, {b.nets.length} net."
-        main(className="kolom"):
-            div(className="kolom-utama"):
-                Kartu(judul="Papan"):
-                    Papan(b=b)
-            div(className="kolom-samping"):
-                Kartu(judul="Ekspor cetak"):
-                    TombolGerber(b=b)
-                Kartu(judul="Kesiapan"):
-                    PanelSiap(b=b)
-                Kartu(judul="Pemeriksaan aturan"):
-                    if temuan.length == 0:
-                        p(className="ok"): "Bersih. Jarak dan lebar jalur aman."
-                    else:
-                        p(className="buruk"): f"{temuan.length} masalah"
-                        for t in temuan:
-                            div(className="temuan"):
-                                span(className="tanda-gagal"): t.jenis
-                                span: t.pesan
-                Kartu(judul="Komponen"):
-                    for p in b.parts:
-                        Baris(nama=p.ref + " · " + p.lib, nilai=p.nilai)
-                Kartu(judul="Net"):
-                    for n in b.nets:
-                        Baris(nama=n.nama, nilai=f"{n.pin.length} pin, {n.trace.length} jalur, {n.via.length} via")
-        footer(className="kaki"):
-            p(className="dim kecil"):
-                f"Ditulis dengan HydraScript. {lib_names().length} footprint di pustaka."
+
+def zoom(alat, f):
+    if alat != null:
+        alat.perbesar(f)
+
+
+def paskan(alat):
+    if alat != null:
+        alat.keTitikTengah()
+
+
+def muat_contoh(setB, setTerpilih, setPesan):
+    setB(board_contoh_siap())
+    setTerpilih(null)
+    setPesan("")
+
+
+def kosongkan(setB, setTerpilih, setPesan):
+    setB(board_baru("board-baru"))
+    setTerpilih(null)
+    setPesan("Pilih atau buat net, lalu pilih footprint dari pustaka.")
+
+
+def pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan):
+    def tangkap(ev):
+        t = ev.target
+        if t != null and (t.tagName == "INPUT" or t.tagName == "TEXTAREA"):
+            return
+        st = rujukan.current.status()
+        k = ev.key.toLowerCase()
+        if k == "v":
+            setMode("pilih")
+        elif k == "w":
+            setMode("jalur")
+        elif k == "x":
+            setMode("hapus")
+        elif k == "r" and st.terpilih != null:
+            rujukan.current.pakai(part_putar(rujukan.current.b(), st.terpilih, 90), false)
+        elif k == "delete" and st.terpilih != null:
+            rujukan.current.pakai(part_hapus(rujukan.current.b(), st.terpilih), false)
+            setTerpilih(null)
+        elif k == "escape":
+            setTerpilih(null)
+        elif (ev.ctrlKey or ev.metaKey) and k == "z":
+            ev.preventDefault()
+            rujukan.current.undo()
+        elif (ev.ctrlKey or ev.metaKey) and k == "y":
+            ev.preventDefault()
+            rujukan.current.redo()
+    document.addEventListener("keydown", tangkap)
+    return lambda: document.removeEventListener("keydown", tangkap)
 
 
 def main():
     akar = document.getElementById("root")
     if akar == null:
         return
-    createRoot(akar).render(App())
+    createRoot(akar).render(Editor())
 
 
 main()

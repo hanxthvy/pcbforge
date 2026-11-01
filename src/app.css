@@ -205,86 +205,157 @@ button:focus-visible { outline: 2px solid var(--aksen); outline-offset: 2px; }
   border-top: 1px solid var(--line);
 }
 
-/* ---------- layar sempit ---------- */
+/* ---------- editor: tata letak kerja ---------- */
 
-@media (max-width: 900px) {
-  .kolom { grid-template-columns: minmax(0, 1fr); }
-  .kolom-utama { order: 1; }
-  .kolom-samping { order: 2; }
-}
+.kerja { display: flex; flex-direction: column; min-height: 100vh; }
 
-@media (max-width: 520px) {
-  .shell { padding-left: 12px; padding-right: 12px; }
-  .kartu { border-radius: 12px; }
-  .legenda { gap: 5px 12px; font-size: 12px; }
-  .nilai { white-space: normal; text-align: right; }
-}
-
-/* Hormati pengguna yang meminta gerakan minimum. */
-@media (prefers-reduced-motion: reduce) {
-  button { transition: none; }
-}
-
-/* ---------- papan yang bisa diperbesar ---------- */
-
-.papan-bungkus.dapat-disentuh { cursor: zoom-in; }
-.dapat-disentuh:focus-visible { outline: 2px solid var(--aksen); outline-offset: 3px; }
-.petunjuk { margin: 8px 0 0; }
-
-.legenda {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 14px;
-  margin-top: 12px;
-  font-size: 12.5px;
-  color: var(--dim);
-}
-
-.selubung {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(6, 8, 12, 0.86);
-  backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  animation: muncul 120ms ease;
-}
-@keyframes muncul { from { opacity: 0 } to { opacity: 1 } }
-
-.sorot {
-  width: 100%;
-  max-width: 960px;
+.kerja-kepala {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 10px clamp(12px, 2vw, 20px);
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
-  border: 1px solid var(--line-2);
-  border-radius: 14px;
-  padding: 14px;
-  max-height: 100%;
-  overflow: auto;
 }
-.sorot-kepala {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.kepala-kiri { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.kepala-kanan { display: flex; gap: 8px; flex-wrap: wrap; }
+.kepala-info { font-variant-numeric: tabular-nums; }
+
+.kerja-isi {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(250px, 300px);
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 12px clamp(12px, 2vw, 20px) 40px;
+  align-items: start;
+  flex: 1;
 }
-button.tutup {
-  /* 44px: ukuran sentuh minimum yang biasa dipakai. 38px terasa sempit di ponsel
-     karena tombol ini sering ditekan untuk keluar dari sorotan. */
-  width: auto;
-  min-height: 44px;
-  padding: 0 18px;
-  font-size: 14px;
+.kerja-kiri, .kerja-kanan { min-width: 0; }
+.kerja-tengah { min-width: 0; display: flex; flex-direction: column; }
+
+.kanvas-bungkus {
+  position: relative; width: 100%; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--line); background: #090b0f;
+}
+.kanvas { display: block; width: 100%; touch-action: none; }
+.kanvas-bawah {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 10px;
+}
+.kanvas-bantu { max-width: 46ch; }
+.kecil-deret { flex: none; }
+.kecil-deret button { width: auto; min-width: 44px; padding: 0 12px; }
+
+/* ---------- kendali ---------- */
+
+.segmen { display: flex; gap: 4px; background: var(--panel-2); border-radius: 9px; padding: 3px; }
+.segmen.lebar { width: 100%; }
+.segmen.lebar .seg { flex: 1; }
+.seg {
+  flex: none; min-height: 34px; width: auto; padding: 0 12px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  font-size: 13.5px; color: var(--dim);
+}
+.seg:hover { background: rgba(148,163,184,0.09); color: var(--fg); }
+.seg.aktif { background: #2a3346; color: #fff; border-color: #3c4a63; }
+
+.masuk-baris { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.label { flex: none; min-width: 84px; font-size: 13px; color: var(--dim); }
+.masuk-baris .masuk { flex: 1; }
+
+.masuk {
+  width: 100%; min-height: 40px; padding: 0 11px;
+  border-radius: 9px; border: 1px solid var(--line-2);
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 14px;
+}
+.masuk:focus { outline: none; border-color: var(--aksen); }
+
+.daftar-gulir { max-height: 260px; overflow-y: auto; margin-top: 10px; }
+.daftar-gulir.pendek { max-height: 150px; }
+
+.baris-tombol {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; width: 100%; min-height: 38px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--fg); font-size: 13.5px; text-align: left;
+}
+.baris-tombol:hover { background: rgba(148,163,184,0.08); }
+.baris-tombol.terpilih { background: #26314a; border-color: #3c4a63; }
+.baris-tombol .kunci { overflow-wrap: anywhere; }
+
+.tombol-deret { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.tombol-deret .kecil-tombol { flex: 1; min-width: 0; }
+.kecil-tombol { min-height: 40px; width: auto; padding: 0 14px; font-size: 13.5px; }
+.geser-cepat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 4px; }
+.geser-cepat button { min-height: 40px; font-size: 16px; }
+
+.tab { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab-t {
+  flex: 1; min-height: 36px; width: auto; padding: 0 10px; font-size: 13px;
+  background: transparent; border: 1px solid transparent; color: var(--dim);
+  border-radius: 8px;
+}
+.tab-t.aktif { background: var(--panel-2); color: var(--fg); border-color: var(--line-2); }
+
+.pesan {
+  margin-top: 10px; padding: 9px 12px; border-radius: 9px; font-size: 13.5px;
+  background: rgba(232,192,106,0.10); border: 1px solid rgba(232,192,106,0.35);
+  color: var(--ingat); cursor: pointer;
 }
 
-/* Ruang aman bawah: cegah kartu terakhir menempel ke tepi layar, dan hindari
-   terpotong oleh bilah gestur di ponsel. */
-.shell { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+.tab-layar { display: none; }
 
-@media (max-width: 520px) {
-  .sorot { border-radius: 12px; padding: 12px; }
-  .shell { padding-left: 12px; padding-right: 12px; }
+/* ---------- ponsel: satu panel penuh pada satu waktu ---------- */
+
+@media (max-width: 1040px) {
+  .tab-layar {
+    display: flex; gap: 4px; padding: 8px clamp(12px, 2vw, 20px) 0;
+  }
+  .tl {
+    flex: 1; min-height: 40px; width: auto; font-size: 13.5px;
+    background: transparent; border: 1px solid transparent; color: var(--dim);
+    border-radius: 9px;
+  }
+  .tl.aktif { background: var(--panel-2); color: var(--fg); border-color: var(--line-2); }
+
+  .kerja-isi { grid-template-columns: minmax(0, 1fr); }
+  .layar-kanvas .kerja-kiri, .layar-kanvas .kerja-kanan { display: none; }
+  .layar-alat .kerja-tengah, .layar-alat .kerja-kanan { display: none; }
+  .layar-atur .kerja-tengah, .layar-atur .kerja-kiri { display: none; }
+  .kerja-kiri, .kerja-kanan { max-height: none; }
 }
+
+@media (min-width: 1041px) {
+  .kerja-isi { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(250px, 300px); }
+  .kerja-kiri, .kerja-kanan { position: sticky; top: 12px; max-height: calc(100vh - 90px); overflow-y: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seg, .baris-tombol, .masuk { transition: none; }
+}
+
+/* ---------- baris status ---------- */
+
+.status {
+  display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap;
+  margin-top: 10px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.status-baris { display: inline-flex; align-items: baseline; gap: 6px; }
+.status-kunci { color: var(--dim); }
+.status-angka { color: var(--fg); min-width: 52px; }
+.status-kanan { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.status .kecil-tombol { min-height: 30px; padding: 0 10px; font-size: 12.5px; }
+.status .kecil-tombol.aktif { background: #2a3346; border-color: #3c4a63; color: #fff; }
+
+/* ---------- lapisan ---------- */
+
+.tombol-lapisan { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.lap {
+  min-height: 38px; width: auto; padding: 0 6px; font-size: 12.5px;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  background: var(--bg); color: var(--dim);
+}
+.lap.aktif { background: #2a3346; border-color: #4c5f80; color: #fff; }
+.lap:nth-child(1).aktif { border-color: #e8b55c88; color: #e8b55c; }
+.lap:nth-child(2).aktif { border-color: #5b8dee88; color: #8fb2ff; }
+.lap:nth-child(3).aktif { border-color: #aab4c888; color: #cbd5e1; }
