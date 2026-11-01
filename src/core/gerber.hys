@@ -1,0 +1,482 @@
+# [xihanzu-NR]
+# Penulis Gerber RS-274X. Ini inti produknya: kalau berkas ini salah, board tidak bisa
+# dicetak, seberapa bagus pun tampilannya.
+#
+# Keputusan format, dan alasannya:
+#
+# - Mode inci, satuan 2.6 (yaitu 4 digit di depan titik, 6 di belakang). Ini yang
+#   paling umum diterima JLCPCB, dan presisinya 25.4 nanometer, jauh di bawah apa pun
+#   yang bisa dibuat pabrik.
+# - Aperture didefinisikan sekali di kepala berkas (AD), lalu dipakai dengan kode D.
+#   Aperture baru dibuat hanya kalau ukurannya benar-benar baru.
+# - Flash (D03) untuk pad, draw (D01) untuk ruas trace, move (D02) untuk pindah tanpa
+#   menggambar.
+# - Atribut X2 (TF.FileFunction, TF.Part, TA.AperFunction) ditulis supaya pabrik tahu
+#   sendiri mana lapisan apa tanpa menebak dari nama berkas.
+#
+# Yang TIDAK dipakai: arc (G02/G03). Sudut ruas trace diputus jadi segmen pendek.
+# Alasannya teknis: notasi arc Gerber memakai I/J relatif terhadap titik pusat, dan
+# salah hitung pusat membuat trace melengkung ke arah yang salah tanpa peringatan.
+# Untuk sudut 45 derajat, yang dipakai semua board praktis, segmen lurus sudah persis.
+
+from "./units.hys" import mm_to_inch, fmt, fmt_mm, gabung_baris
+from "./geom.hys" import path_segments
+from "./board.hys" import semua_pad
+from "./lib.hys" import lib_get, lib_ada
+
+# Batas pemecahan sudut. Kalau simpul lebih tajam dari ini, ruas dipecah jadi dua
+# segmen pendek supaya tembaganya tetap masuk akal. Trace umumnya 45 derajat, jadi
+# nilai ini jarang tersentuh.
+SUDUT_MIN = 135
+
+# Jarak yang dianggap nol, milimeter. Satu mikron jauh di bawah resolusi pabrik.
+# Ditulis sebagai desimal, bukan 1e-9: parser Hydra belum menerima notasi eksponen
+# pada literal.
+EPS = 0.000001
+
+
+export def fmt_koord(mm):
+    # Gerber mode inci 2.6: nilai dalam inci dikali 1e6, tanpa titik desimal.
+    # Nol di depan boleh diringkas, tanda minus wajib di depan.
+    v = mm_to_inch(mm) * 1000000
+    n = Math.round(v)
+    return f"{n}"
+
+
+export def fmt_aperture(v):
+    # Ukuran aperture dalam inci, sampai 6 desimal, tanpa nol berekor.
+    s = fmt(mm_to_inch(v), 6)
+    while ends_with(s, "0"):
+        s = slice_str(s, 0, s.length - 1)
+    if ends_with(s, "."):
+        s = s + "0"
+    return s
+
+
+export def ends_with(s, suf):
+    return s.length >= suf.length and slice_str(s, s.length - suf.length, s.length) == suf
+
+
+export def slice_str(s, a, b):
+    return s.substring(a, b)
+
+
+# ---------- pengelola aperture ----------
+
+export def apo_baru():
+    return { daftar: {}, berikut: 10 }
+
+
+export def apo_kunci(jenis, a, b):
+    return f"{jenis}:{fmt_mm(a)}:{fmt_mm(b)}"
+
+
+export def apo_ambil(apo, jenis, a, b):
+    # Mengembalikan kode D untuk aperture ini, membuatnya kalau belum ada.
+    k = apo_kunci(jenis, a, b)
+    if apo.daftar[k] != undefined:
+        return { kode: apo.daftar[k].kode, baru: false, definisi: apo.daftar[k] }
+    kode = apo.berikut
+    apo.berikut += 1
+    d = { kode: kode, jenis: jenis, a: a, b: b }
+    apo.daftar[k] = d
+    return { kode: kode, baru: true, definisi: d }
+
+
+export def apo_tulis_def(d):
+    if d.jenis == "C":
+        return f"%ADD{d.kode}C,{fmt_aperture(d.a)}*%"
+    if d.jenis == "R":
+        return f"%ADD{d.kode}R,{fmt_aperture(d.a)}X{fmt_aperture(d.b)}*%"
+    if d.jenis == "O":
+        return f"%ADD{d.kode}O,{fmt_aperture(d.a)}X{fmt_aperture(d.b)}*%"
+    # Rounded rectangle (obround bersudut bulat). Dipakai pad SMD modern.
+    return f"%ADD{d.kode}R,{fmt_aperture(d.a)}X{fmt_aperture(d.b)}*%"
+
+
+export def apo_def_awal(apo, kode, jenis, a, b):
+    d = { kode: kode, jenis: jenis, a: a, b: b }
+    apo.daftar[apo_kunci(jenis, a, b)] = d
+    return d
+
+
+# ---------- kepala dan ekor berkas ----------
+
+export def gerber_kepala(nama, fungsi, part_jenis, atribut_satuan):
+    L = []
+    L.push("%TF.GenerationSoftware,PCBForge,hydrascript,0.1*%")
+    if fungsi != "":
+        L.push(f"%TF.FileFunction,{fungsi}*%")
+    if part_jenis != "":
+        L.push(f"%TF.Part,{part_jenis}*%")
+    L.push("%FSLAX26Y26*%")
+    L.push("%MOIN*%")
+    L.push("%LPD*%")
+    if atribut_satuan.length > 0:
+        L.push(f"%TA.AperFunction,{atribut_satuan}*%")
+    return L
+
+
+export def gerber_ekor():
+    return ["M02*"]
+
+
+# ---------- badan ----------
+
+export def tulis_flash(L, apo, apo_list, x, y, bentuk, w, h):
+    # Pad dipindah ke koordinat board sudah dilakukan pemanggil.
+    jenis = "R"
+    a = w
+    b = h
+    if bentuk == "circle":
+        jenis = "C"
+        a = w
+        b = 0
+    if bentuk == "oval":
+        jenis = "O"
+    ap = apo_ambil(apo, jenis, a, b)
+    if ap.baru:
+        apo_list.push(ap.definisi)
+    L.push(f"D{ap.kode}*")
+    L.push(f"X{fmt_koord(x)}Y{fmt_koord(y)}D03*")
+
+
+export def tulis_jalur(L, apo, apo_list, pts, lebar):
+    ap = apo_ambil(apo, "C", lebar, 0)
+    if ap.baru:
+        apo_list.push(ap.definisi)
+    # Titik yang berdempet dibuang: Gerber menolak D01 dengan titik yang sama.
+    bersih = []
+    for p in pts:
+        if bersih.length == 0:
+            bersih.push(p)
+        else:
+            q = bersih[bersih.length - 1]
+            if Math.abs(p.x - q.x) > EPS or Math.abs(p.y - q.y) > EPS:
+                bersih.push(p)
+    if bersih.length < 2:
+        return
+    L.push(f"D{ap.kode}*")
+    L.push(f"X{fmt_koord(bersih[0].x)}Y{fmt_koord(bersih[0].y)}D02*")
+    i = 1
+    while i < bersih.length:
+        L.push(f"X{fmt_koord(bersih[i].x)}Y{fmt_koord(bersih[i].y)}D01*")
+        i += 1
+
+
+export def titik_outline(outline):
+    # Bentuk board: persegi, atau persegi bersudut bulat yang didekati segmen.
+    w = outline.lebar
+    h = outline.tinggi
+    r = outline.radius
+    if outline.sudut != "bulat" or r <= 0:
+        return [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }, { x: 0, y: 0 }]
+    if r > Math.min(w, h) / 2:
+        r = Math.min(w, h) / 2
+    pts = []
+    langkah = 8
+    pusat = [
+        { cx: w - r, cy: r, a0: -90 },
+        { cx: w - r, cy: h - r, a0: 0 },
+        { cx: r, cy: h - r, a0: 90 },
+        { cx: r, cy: r, a0: 180 },
+    ]
+    i = 0
+    while i < pusat.length:
+        c = pusat[i]
+        k = 0
+        while k <= langkah:
+            a = (c.a0 + 90 * (k / langkah)) * Math.PI / 180
+            pts.push({ x: c.cx + r * Math.cos(a), y: c.cy + r * Math.sin(a) })
+            k += 1
+        i += 1
+    pts.push({ x: pts[0].x, y: pts[0].y })
+    return pts
+
+
+# ---------- satu lapisan penuh ----------
+
+export def tr_pt(part, x, y):
+    # Pindahkan titik dari koordinat komponen ke koordinat board, ikut rotasi dan
+    # sisi pemasangan. Sisi bawah dicerminkan mendatar, sama seperti semua_pad().
+    rad = part.rot * Math.PI / 180
+    cs = Math.cos(rad)
+    sn = Math.sin(rad)
+    cermin = 1
+    if part.side == "B":
+        cermin = -1
+    px = x * cermin
+    py = y
+    return { x: px * cs - py * sn + part.x, y: px * sn + py * cs + part.y }
+
+
+export def lapisan_copper(b, sisi):
+    L = []
+    apo = apo_baru()
+    apo_list = []
+    badan = []
+
+    # Vias lebih dulu: mereka milik board, bukan komponen.
+    for n in b.nets:
+        for v in n.via:
+            d = v.diameter
+            if d == undefined:
+                d = v.bor + 2 * b.aturan.annular_min + 0.2
+            tulis_flash(badan, apo, apo_list, v.x, v.y, "circle", d, d)
+
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            # Pad tembus harus muncul di KEDUA lapisan tembaga, pad SMD hanya di
+            # sisi tempat komponennya duduk. Versi sebelumnya menyaring komponen per
+            # sisi LEBIH DULU, jadi komponen di sisi atas tidak pernah menyumbang pad
+            # ke lapisan bawah — lubang tembus header tidak ada tembaganya di B_Cu,
+            # dan pabrik tidak bisa menyambungnya. Lolos build, lolos DRC, gagal
+            # dicetak.
+            if pd.jenis != "tht" and p.side != sisi:
+                continue
+            tulis_flash(badan, apo, apo_list, pd.x, pd.y, pd.bentuk, pd.w, pd.h)
+
+    for n in b.nets:
+        for t in n.trace:
+            if t.layer != sisi:
+                continue
+            tulis_jalur(badan, apo, apo_list, t.pts, t.lebar)
+
+    nama_fungsi = "Copper,L1,Top"
+    part = "Single"
+    if sisi == "B":
+        nama_fungsi = "Copper,L2,Bot"
+        part = "Single"
+    L = gerber_kepala(b.meta.nama, nama_fungsi, part, "Conductor")
+    for d in apo_list:
+        L.push(apo_tulis_def(d))
+    for baris in badan:
+        L.push(baris)
+    L.push("%TF.Attr*%")
+    for e in gerber_ekor():
+        L.push(e)
+    return gabung_baris(L)
+
+
+export def lapisan_mask(b, sisi):
+    # Lapisan soldermask berisi BUKAAN, yaitu tempat pasta pateri menyentuh tembaga.
+    # Jadi pad digambar dengan pelebaran, bukan ukuran aslinya.
+    L = []
+    apo = apo_baru()
+    apo_list = []
+    badan = []
+    exp = 0.05
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            # Pad tembus dibuka di kedua sisi, sama alasannya dengan lapisan tembaga:
+            # tanpa bukaan di sisi bawah, pasta pateri tidak bisa mencapai pad.
+            if pd.jenis != "tht" and p.side != sisi:
+                continue
+            tulis_flash(badan, apo, apo_list, pd.x, pd.y, pd.bentuk, pd.w + 2 * exp, pd.h + 2 * exp)
+    for n in b.nets:
+        for v in n.via:
+            # Via tertutup mask (tented) adalah kebiasaan umum; di sini dibuka
+            # supaya board sederhana lebih mudah diperiksa.
+            d = v.diameter
+            if d == undefined:
+                d = v.bor + 2 * b.aturan.annular_min + 0.2
+            tulis_flash(badan, apo, apo_list, v.x, v.y, "circle", d + 2 * exp, d + 2 * exp)
+    fungsi = "Soldermask,Top"
+    if sisi == "B":
+        fungsi = "Soldermask,Bot"
+    L = gerber_kepala(b.meta.nama, fungsi, "Single", "Soldermask")
+    for d in apo_list:
+        L.push(apo_tulis_def(d))
+    for baris in badan:
+        L.push(baris)
+    for e in gerber_ekor():
+        L.push(e)
+    return gabung_baris(L)
+
+
+export def lapisan_paste(b, sisi):
+    # Pasta hanya untuk komponen SMD. Pad tembus tidak dipateri dengan stensil.
+    L = []
+    apo = apo_baru()
+    apo_list = []
+    badan = []
+    for p in b.parts:
+        if p.side != sisi:
+            continue
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.jenis == "tht":
+                continue
+            tulis_flash(badan, apo, apo_list, pd.x, pd.y, pd.bentuk, pd.w, pd.h)
+    fungsi = "SolderPaste,Top"
+    if sisi == "B":
+        fungsi = "SolderPaste,Bot"
+    L = gerber_kepala(b.meta.nama, fungsi, "Single", "SolderPaste")
+    for d in apo_list:
+        L.push(apo_tulis_def(d))
+    for baris in badan:
+        L.push(baris)
+    for e in gerber_ekor():
+        L.push(e)
+    return gabung_baris(L)
+
+
+export def lapisan_silk(b, sisi):
+    # Sablon: garis luar komponen dari pustaka, dipindah ke koordinat board.
+    #
+    # Yang belum ada: teks penanda (R1, C2, ...). Gerber tidak punya font, jadi teks
+    # harus digambar sebagai goresan dari tabel bentuk huruf, dan itu pekerjaan
+    # tersendiri. Untuk perakitan, penempatan komponen dipandu berkas CPL, bukan
+    # sablon. Jadi sablon tetap berguna sekarang, dan penanda menyusul.
+    L = []
+    apo = apo_baru()
+    apo_list = []
+    badan = []
+    lebar = 0.12
+    for p in b.parts:
+        if p.side != sisi:
+            continue
+        if lib_ada(p.lib) == false:
+            continue
+        lb = lib_get(p.lib)
+        for sg in lb.silk:
+            if sg.length == 4:
+                a = tr_pt(p, sg[0], sg[1])
+                c = tr_pt(p, sg[2], sg[3])
+                tulis_jalur(badan, apo, apo_list, [a, c], lebar)
+            else:
+                # Lingkaran: didekati segmen.
+                cx = sg[1]
+                cy = sg[2]
+                r = sg[3]
+                pts = []
+                k = 0
+                while k <= 16:
+                    ang = (k / 16) * Math.PI * 2
+                    pts.push(tr_pt(p, cx + r * Math.cos(ang), cy + r * Math.sin(ang)))
+                    k += 1
+                tulis_jalur(badan, apo, apo_list, pts, lebar)
+    fungsi = "Legend,Top"
+    if sisi == "B":
+        fungsi = "Legend,Bot"
+    L = gerber_kepala(b.meta.nama, fungsi, "Single", "Legend")
+    for d in apo_list:
+        L.push(apo_tulis_def(d))
+    for baris in badan:
+        L.push(baris)
+    for e in gerber_ekor():
+        L.push(e)
+    return gabung_baris(L)
+
+
+export def lapisan_tepi(b):
+    # Bentuk board. Ini yang diberi nama Edge_Cuts oleh pabrik.
+    L = []
+    apo = apo_baru()
+    apo_list = []
+    badan = []
+    pts = titik_outline(b.outline)
+    tulis_jalur(badan, apo, apo_list, pts, 0.15)
+    # Lubang mekanis (bukan lubang komponen), misalnya lubang sekrup.
+    for h in b.outline.lubang:
+        pts2 = []
+        k = 0
+        while k <= 24:
+            ang = (k / 24) * Math.PI * 2
+            pts2.push({ x: h.x + h.r * Math.cos(ang), y: h.y + h.r * Math.sin(ang) })
+            k += 1
+        tulis_jalur(badan, apo, apo_list, pts2, 0.15)
+    L = gerber_kepala(b.meta.nama, "Profile,NP", "Single", "Profile")
+    for d in apo_list:
+        L.push(apo_tulis_def(d))
+    for baris in badan:
+        L.push(baris)
+    for e in gerber_ekor():
+        L.push(e)
+    return gabung_baris(L)
+
+
+# ---------- Excellon: berkas bor ----------
+
+export def excellon(b):
+    # Format Excellon, satuan metrik, 3 desimal. Dipakai untuk semua lubang:
+    # pad tembus dan via.
+    #
+    # Lubang dikelompokkan per diameter dan diberi kode alat T1, T2, dst. Itu cara
+    # baku: mesin bor memakai satu mata bor untuk semua lubang berdiameter sama.
+    bor = []
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.jenis != "tht":
+                continue
+            d = pd.bor
+            if d == undefined or d <= 0:
+                d = 0.8
+            bor.push({ d: d, x: pd.x, y: pd.y })
+    for n in b.nets:
+        for v in n.via:
+            d = v.bor
+            if d == undefined:
+                d = 0.4
+            bor.push({ d: d, x: v.x, y: v.y })
+
+    # Kelompokkan per diameter, urut menaik supaya berkasnya stabil antar revisi.
+    ukuran = []
+    for p in bor:
+        ada = false
+        for u in ukuran:
+            if Math.abs(u - p.d) < 0.000001:
+                ada = true
+        if ada == false:
+            ukuran.push(p.d)
+    ukuran.sort(lambda a, b: a - b)
+
+    L = []
+    L.push("M48")
+    L.push("; DRILL file (PCBForge)")
+    L.push("; FORMAT={-:-/ absolute / metric / decimal}")
+    L.push("FMAT,2")
+    L.push("METRIC")
+    i = 0
+    while i < ukuran.length:
+        L.push(f"T{i + 1}C{fmt(ukuran[i], 3)}")
+        i += 1
+    L.push("%")
+    L.push("G90")
+    L.push("G05")
+    i = 0
+    while i < ukuran.length:
+        L.push(f"T{i + 1}")
+        for p in bor:
+            if Math.abs(p.d - ukuran[i]) < 0.000001:
+                L.push(f"X{fmt(p.x, 3)}Y{fmt(p.y, 3)}")
+        i += 1
+    L.push("T0")
+    L.push("M30")
+    return gabung_baris(L)
+
+
+# ---------- semua lapisan sekaligus ----------
+
+export def gerber_semua(b):
+    # Mengembalikan daftar berkas siap dikemas jadi satu zip untuk pabrik.
+    # Nama berkas mengikuti kebiasaan KiCad, jadi pabrik mengenalinya langsung.
+    out = []
+    out.push({ nama: b.meta.nama + "-F_Cu.gtl", isi: lapisan_copper(b, "F") })
+    out.push({ nama: b.meta.nama + "-B_Cu.gbl", isi: lapisan_copper(b, "B") })
+    out.push({ nama: b.meta.nama + "-F_Mask.gts", isi: lapisan_mask(b, "F") })
+    out.push({ nama: b.meta.nama + "-B_Mask.gbs", isi: lapisan_mask(b, "B") })
+    out.push({ nama: b.meta.nama + "-F_Silkscreen.gto", isi: lapisan_silk(b, "F") })
+    out.push({ nama: b.meta.nama + "-B_Silkscreen.gbo", isi: lapisan_silk(b, "B") })
+    out.push({ nama: b.meta.nama + "-F_Paste.gtp", isi: lapisan_paste(b, "F") })
+    out.push({ nama: b.meta.nama + "-B_Paste.gbp", isi: lapisan_paste(b, "B") })
+    out.push({ nama: b.meta.nama + "-Edge_Cuts.gm1", isi: lapisan_tepi(b) })
+    out.push({ nama: b.meta.nama + ".drl", isi: excellon(b) })
+    return out
