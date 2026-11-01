@@ -1,0 +1,142 @@
+# [xihanzu-NR]
+# Uji perintah penyuntingan (core/cmd.hys).
+#
+# Ini uji yang seharusnya ada sejak awal: seluruh jalur editor dan asisten AI lewat
+# sini, jadi kalau satu perintah diam-diam tidak bekerja, editornya tampak hidup tapi
+# tidak melakukan apa-apa. Persis itu yang terjadi pada putar dan balik sisi, dan
+# uji ini menangkapnya dalam sekejap tanpa perlu membuka peramban.
+
+from "./contoh.mjs" import board_contoh_siap
+from "./board.mjs" import board_baru
+from "./lib.mjs" import lib_get
+from "./cmd.mjs" import board_sah
+from "./cmd.mjs" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi
+from "./cmd.mjs" import net_tambah, net_pin, jalur_tambah, board_ukuran
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def utama():
+    b = board_contoh_siap()
+    cek("board contoh sah", board_sah(b), "")
+    cek("board null tidak sah", board_sah(null) == false, "")
+    cek("dokumen bukan board tidak sah", board_sah({ x: 1 }) == false, "")
+
+    # perintah atas dokumen yang tidak sah harus menolak, bukan melempar
+    h = part_putar(null, "R1", 90)
+    cek("perintah atas board tidak sah ditolak", h.pesan != "" and h.b == null, h.pesan)
+    h = part_pindah({ x: 1 }, "R1", 5, 5)
+    cek("perintah atas dokumen asing ditolak", h.pesan != "", h.pesan)
+
+    # ---- putar ----
+    # Di tempat aslinya (13,7), memutar R1 melanggar clearance. Itu benar.
+    h = part_putar(b, "TIDAK_ADA", 90)
+    cek("putar penanda yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # Pindahkan dulu ke tempat lapang, baru putar harus berhasil.
+    h = part_pindah(b, "R1", 30, 6)
+    cek("pindah ke tempat lapang", h.pesan == "", h.pesan)
+    h2 = part_putar(h.b, "R1", 90)
+    cek("putar di tempat lapang berhasil", h2.pesan == "", h2.pesan)
+    cek("rotasi jadi 90", rot(h2.b, "R1") == 90, str(rot(h2.b, "R1")))
+    h3 = part_putar(h2.b, "R1", 90)
+    cek("putar dua kali jadi 180", rot(h3.b, "R1") == 180, str(rot(h3.b, "R1")))
+
+    # ---- balik sisi ----
+    h = part_sisi(h3.b, "R1")
+    cek("balik sisi berhasil", h.pesan == "", h.pesan)
+    cek("sisi jadi B", sisi(h.b, "R1") == "B", sisi(h.b, "R1"))
+    h = part_sisi(h.b, "R1")
+    cek("balik sisi lagi jadi F", sisi(h.b, "R1") == "F", sisi(h.b, "R1"))
+
+    # ---- rotasi tepat di tempat aslinya: R1 (13,7) berdekatan dengan J1, dan
+    # ujung badan R_0805 setelah diputar menyentuh clearance. Jadi putarannya harus
+    # DITOLAK dengan alasan dari DRC, bukan diterima diam-diam.
+    b4 = board_contoh_siap()
+    sebelum_rot = rot(b4, "R1")
+    h = part_putar(b4, "R1", 90)
+    cek("putar yang melanggar clearance ditolak", h.pesan != "", h.pesan)
+    cek("dokumen asli utuh setelah penolakan DRC", rot(b4, "R1") == sebelum_rot,
+        "rot=" + str(rot(b4, "R1")))
+
+    b2 = board_contoh_siap()
+    h = part_pindah(b2, "J1", -5, 5)
+    cek("pindah ke luar board ditolak", h.pesan != "", h.pesan)
+    h = part_tambah(b2, "TIDAK_ADA_FP", "", 5, 5, 0, "F", "x")
+    cek("footprint karangan ditolak", h.pesan != "", h.pesan)
+    h = part_tambah(b2, "R_0805", "R1", 5, 5, 0, "F", "1K")
+    cek("penanda yang sudah dipakai ditolak", h.pesan != "", h.pesan)
+    h = part_hapus(b2, "TIDAK_ADA")
+    cek("hapus penanda yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- net ----
+    h = net_tambah(b2, "VCC")
+    cek("net yang sudah ada ditolak", h.pesan != "", h.pesan)
+    h = net_tambah(b2, "N9")
+    cek("net baru berhasil", h.pesan == "", h.pesan)
+    cek("net N9 ada", cari_net(h.b, "N9") != null, "")
+    h = net_pin(h.b, "N9", "TIDAK_ADA", 1)
+    cek("pin ke penanda yang tidak ada ditolak", h.pesan != "", h.pesan)
+    h = net_pin(h.b, "N9", "J1", 99)
+    cek("pad yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- jalur ----
+    h = jalur_tambah(b2, "TIDAK_ADA", "F", 0.4, [{ x: 1, y: 1 }, { x: 2, y: 2 }])
+    cek("jalur ke net yang tidak ada ditolak", h.pesan != "", h.pesan)
+    h = jalur_tambah(b2, "N9", "F", 0.05, [{ x: 1, y: 1 }, { x: 2, y: 2 }])
+    cek("jalur terlalu kurus ditolak", h.pesan != "", h.pesan)
+    h = jalur_tambah(b2, "N9", "F", 0.4, [{ x: 1, y: 1 }])
+    cek("jalur satu titik ditolak", h.pesan != "", h.pesan)
+
+    # ---- ukuran ----
+    h = board_ukuran(b2, 5, 5)
+    cek("board terlalu kecil ditolak", h.pesan != "", h.pesan)
+    h = board_ukuran(b2, 400, 20)
+    cek("board terlalu besar ditolak", h.pesan != "", h.pesan)
+    h = board_ukuran(b2, 60, 40)
+    cek("ukuran baru berhasil", h.pesan == "", h.pesan)
+    cek("lebar berubah", h.b.outline.lebar == 60, str(h.b.outline.lebar))
+
+    # ---- dokumen asli tidak boleh tersentuh saat perintah ditolak ----
+    b3 = board_contoh_siap()
+    sebelum = b3.parts.length
+    h = part_tambah(b3, "TIDAK_ADA_FP", "", 5, 5, 0, "F", "x")
+    cek("dokumen asli utuh setelah penolakan", b3.parts.length == sebelum,
+        str(b3.parts.length) + " vs " + str(sebelum))
+
+    return 0
+
+
+def rot(b, ref):
+    for p in b.parts:
+        if p.ref == ref:
+            return p.rot
+    return -1
+
+
+def sisi(b, ref):
+    for p in b.parts:
+        if p.ref == ref:
+            return p.side
+    return "?"
+
+
+def cari_net(b, nama):
+    for n in b.nets:
+        if n.nama == nama:
+            return n
+    return null
+
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1

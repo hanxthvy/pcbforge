@@ -8,7 +8,7 @@
 from "./board.hys" import cari_pad
 from "./lib.hys" import lib_ada
 from "./contoh.hys" import board_contoh_siap
-from "./lib.mjs" import lib_get
+from "./lib.hys" import lib_get
 from "./geom.hys" import point_seg_dist, pt
 from "./units.hys" import gabung_daftar
 

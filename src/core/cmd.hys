@@ -1,0 +1,237 @@
+# [xihanzu-NR]
+# Perintah penyuntingan board.
+#
+# Semua perubahan board lewat sini, tidak ada yang menyentuh dokumen secara langsung.
+# Alasannya: editor visual dan asisten AI harus memakai jalur yang sama, dan tiap
+# perintah diperiksa dulu di atas SALINAN dokumen. Kalau perintah ditolak, dokumen
+# asli belum tersentuh sama sekali, jadi tidak ada keadaan setengah jadi.
+#
+# Fungsi-fungsi di bawah mengubah `b` di tempat dan mengembalikan pesan galat, atau
+# "" kalau berhasil. Pemanggil yang menentukan mau disimpan atau dibuang.
+
+from "./board.hys" import board_salin, ref_berikutnya, cari_part, cari_pad, net_pin_tambah, net_cari
+from "./lib.hys" import lib_ada, lib_get
+from "./drc.hys" import periksa
+from "./units.hys" import clamp
+
+
+export def board_sah(b):
+    # Diperiksa di setiap perintah, sebelum apa pun yang lain.
+    #
+    # Alasannya nyata: dari halaman, sebuah seretan tetikus bisa selesai SETELAH board
+    # berganti (tombol di panel ditekan di tengah seretan), dan saat itu perintah
+    # menerima dokumen yang bukan board lagi. Tanpa gerbang ini, `b.parts` bukan daftar,
+    # perulangan di DRC melempar "t.parts is not iterable", dan karena galatnya terjadi
+    # di dalam penangan kanvas, SELURUH halaman lepas. Satu perintah dengan masukan
+    # buruk tidak boleh menjatuhkan aplikasi.
+    if b == null or b == undefined:
+        return false
+    if b.parts == undefined or b.nets == undefined or b.outline == undefined:
+        return false
+    return true
+
+
+export def pesan_gagal(b, salinan):
+    # Jalan pintas untuk pemeriksaan: kalau ada pelanggaran BARU setelah perubahan,
+    # perintahnya ditolak.
+    lama = periksa(b)
+    baru = periksa(salinan)
+    if baru.length > lama.length:
+        return baru[baru.length - 1].pesan
+    return ""
+
+
+export def part_tambah(b, lib, ref, x, y, rot, side, nilai):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    # Mengembalikan { b, pesan }. `b` adalah dokumen yang mungkin sudah diganti.
+    if lib_ada(lib) == false:
+        return { b: b, pesan: "footprint '" + lib + "' tidak ada di pustaka" }
+    if ref == "":
+        ref = ref_berikutnya(b, lib.substring(0, 1).toUpperCase())
+    if cari_part(b, ref) != null:
+        return { b: b, pesan: "penanda " + ref + " sudah dipakai" }
+
+    if x < 0 or y < 0 or x > b.outline.lebar or y > b.outline.tinggi:
+        return { b: b, pesan: "komponen di luar area board" }
+    salinan = board_salin(b)
+    salinan.parts.push({
+        ref: ref, lib: lib, nilai: nilai, x: x, y: y, rot: rot, side: side,
+    })
+    g = pesan_gagal(b, salinan)
+    if g != "":
+        return { b: b, pesan: g }
+    return { b: salinan, pesan: "" }
+
+
+export def part_hapus(b, ref):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if cari_part(b, ref) == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    salinan = board_salin(b)
+    sisa = []
+    for p in salinan.parts:
+        if p.ref != ref:
+            sisa.push(p)
+    salinan.parts = sisa
+    # Pin yang menunjuk komponen ini harus ikut dibuang, kalau tidak net-nya jadi
+    # menggantung dan DRC melaporkannya sebagai kesalahan yang membingungkan.
+    for n in salinan.nets:
+        pin = []
+        for q in n.pin:
+            if q.ref != ref:
+                pin.push(q)
+        n.pin = pin
+    return { b: salinan, pesan: "" }
+
+
+export def part_pindah(b, ref, x, y):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    p = cari_part(b, ref)
+    if p == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    if x < 0 or y < 0 or x > b.outline.lebar or y > b.outline.tinggi:
+        return { b: b, pesan: "di luar area board" }
+    salinan = board_salin(b)
+    q = null
+    for r in salinan.parts:
+        if r.ref == ref:
+            q = r
+    q.x = x
+    q.y = y
+    g = pesan_gagal(b, salinan)
+    if g != "":
+        return { b: b, pesan: g }
+    return { b: salinan, pesan: "" }
+
+
+export def part_putar(b, ref, derajat):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    p = cari_part(b, ref)
+    if p == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    salinan = board_salin(b)
+    for r in salinan.parts:
+        if r.ref == ref:
+            r.rot = ((r.rot + derajat) % 360 + 360) % 360
+    g = pesan_gagal(b, salinan)
+    if g != "":
+        return { b: b, pesan: g }
+    return { b: salinan, pesan: "" }
+
+
+export def part_sisi(b, ref):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    p = cari_part(b, ref)
+    if p == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    salinan = board_salin(b)
+    for r in salinan.parts:
+        if r.ref == ref:
+            if r.side == "F":
+                r.side = "B"
+            else:
+                r.side = "F"
+    return { b: salinan, pesan: "" }
+
+
+export def net_tambah(b, nama):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if nama == "":
+        return { b: b, pesan: "nama net tidak boleh kosong" }
+    if net_cari(b, nama) != null:
+        return { b: b, pesan: "net " + nama + " sudah ada" }
+    salinan = board_salin(b)
+    salinan.nets.push({ nama: nama, pin: [], trace: [], via: [] })
+    return { b: salinan, pesan: "" }
+
+
+export def net_pin(b, nama, ref, pad):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if cari_part(b, ref) == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    if cari_pad(b, ref, pad) == null:
+        return { b: b, pesan: "pad " + str(pad) + " tidak ada di " + ref }
+    salinan = board_salin(b)
+    net_pin_tambah(salinan, nama, ref, pad)
+    return { b: salinan, pesan: "" }
+
+
+export def jalur_tambah(b, nama, layer, lebar, pts):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    n = net_cari(b, nama)
+    if n == null:
+        return { b: b, pesan: "net " + nama + " belum ada" }
+    if pts.length < 2:
+        return { b: b, pesan: "jalur butuh minimal dua titik" }
+    if lebar + 0.000001 < b.aturan.lebar_trace_min:
+        return { b: b, pesan: "lebar " + str(lebar) + " kurang dari minimum " + str(b.aturan.lebar_trace_min) }
+    salinan = board_salin(b)
+    for m in salinan.nets:
+        if m.nama == nama:
+            m.trace.push({ layer: layer, lebar: lebar, pts: pts })
+    g = pesan_gagal(b, salinan)
+    if g != "":
+        return { b: b, pesan: g }
+    return { b: salinan, pesan: "" }
+
+
+export def jalur_hapus(b, nama, indeks):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    n = net_cari(b, nama)
+    if n == null:
+        return { b: b, pesan: "net " + nama + " belum ada" }
+    if indeks < 0 or indeks >= n.trace.length:
+        return { b: b, pesan: "jalur nomor " + str(indeks) + " tidak ada" }
+    salinan = board_salin(b)
+    for m in salinan.nets:
+        if m.nama == nama:
+            sisa = []
+            i = 0
+            while i < m.trace.length:
+                if i != indeks:
+                    sisa.push(m.trace[i])
+                i += 1
+            m.trace = sisa
+    return { b: salinan, pesan: "" }
+
+
+export def via_tambah(b, nama, x, y):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if net_cari(b, nama) == null:
+        return { b: b, pesan: "net " + nama + " belum ada" }
+    if x < 0 or y < 0 or x > b.outline.lebar or y > b.outline.tinggi:
+        return { b: b, pesan: "di luar area board" }
+    salinan = board_salin(b)
+    for m in salinan.nets:
+        if m.nama == nama:
+            m.via.push({ x: x, y: y, bor: 0.4, diameter: 0.8 })
+    g = pesan_gagal(b, salinan)
+    if g != "":
+        return { b: b, pesan: g }
+    return { b: salinan, pesan: "" }
+
+
+export def board_ukuran(b, lebar, tinggi):
+    if board_sah(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if lebar < 10 or tinggi < 10:
+        return { b: b, pesan: "ukuran board minimal 10 x 10 mm" }
+    if lebar > 300 or tinggi > 300:
+        return { b: b, pesan: "di atas 300 mm belum didukung" }
+    salinan = board_salin(b)
+    salinan.outline.lebar = lebar
+    salinan.outline.tinggi = tinggi
+    for p in salinan.parts:
+        p.x = clamp(p.x, 1, lebar - 1)
+        p.y = clamp(p.y, 1, tinggi - 1)
+    return { b: salinan, pesan: "" }

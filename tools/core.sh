@@ -20,6 +20,21 @@ cd "$ROOT"
 rm -rf build
 mkdir -p build
 
+# Gerbang 1: tidak boleh ada `def` tanpa `export` di mesin inti.
+#
+# Modul dengan `def` biasa tetap dikompilasi tanpa keluhan, tapi siapa pun yang
+# `import { f } from "./x.hys"` mendapat `undefined`. Yang terlihat di halaman: tombol
+# yang diam tanpa pesan. Tidak ada peringatan di mana pun.
+lepas=""
+for f in src/core/*.hys; do
+  n=$(grep -cE '^def ' "$f" || true)
+  if [ "$n" != "0" ]; then lepas="$lepas $f($n)"; fi
+done
+if [ "$lepas" != "" ]; then
+  echo "  GAGAL: fungsi tanpa export di mesin inti:$lepas"
+  exit 1
+fi
+
 n=0
 for f in src/core/*.hys; do
   base="$(basename "${f%.hys}")"
@@ -56,4 +71,34 @@ if grep -l "from 'hydra'" build/*.mjs >/dev/null 2>&1; then
   grep -l "from 'hydra'" build/*.mjs | sed 's/^/        /'
   exit 1
 fi
+# Gerbang 2: setiap nama yang diimpor harus benar-benar diekspor berkas tujuannya.
+#
+# Ini yang menangkap kesalahan yang paling sering terjadi di sini: menambah pemanggilan
+# ke fungsi yang belum ada, atau lupa `export` pada satu nama. Keduanya hanya terlihat
+# saat halaman dipakai, dan bentuknya galat yang terjadi DI DALAM penangan kanvas
+# sehingga seluruh halaman lepas. Diperiksa dari teks hasil kompilasi, jadi ketahuan
+# sebelum apa pun dijalankan.
+python3 - <<'PY'
+import glob, os, re, sys
+bad = []
+for p in glob.glob("build/*.mjs"):
+    teks = open(p, encoding="utf-8").read()
+    for m in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*['\"]\./([A-Za-z0-9_]+)\.mjs['\"]", teks):
+        nama = [n.strip() for n in m.group(1).split(",") if n.strip()]
+        tujuan = os.path.join("build", m.group(2) + ".mjs")
+        if not os.path.exists(tujuan):
+            bad.append((p, m.group(2), "berkas tujuan tidak ada"))
+            continue
+        isi = open(tujuan, encoding="utf-8").read()
+        for n in nama:
+            if not re.search(r"export\s+(function|const|let|var|class)\s+" + re.escape(n) + r"\b", isi):
+                if "export {" not in isi:
+                    bad.append((os.path.basename(p), m.group(2), n))
+if bad:
+    print("  GAGAL: impor tidak ditemukan:")
+    for a, b, c in bad:
+        print("        " + a + " mengimpor " + c + " dari " + b + ".mjs, tapi tidak ada")
+    sys.exit(1)
+PY
+
 echo "  core: $n modul, uji: $t -> build/ (bebas helper)"
