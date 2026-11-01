@@ -9,20 +9,28 @@ dikompilasi dengan benar, yang diperbaiki adalah compilernya, bukan kode di sini
 
 ## Keadaan sekarang
 
-Mesin inti selesai dan teruji. Antarmuka belum ada.
+Mesin inti selesai dan teruji. Ada satu halaman yang menampilkan board contoh,
+hasil pemeriksaan aturannya, dan tombol yang mengunduh kesepuluh berkas siap cetak.
+Editor kanvas untuk menggambar sendiri belum ada.
 
     src/core/units.hys    satuan, format angka, penggabung teks
     src/core/geom.hys     titik, ruas, jarak, perpotongan
     src/core/lib.hys      pustaka footprint (29 paket, 235 pad)
     src/core/board.hys    model dokumen board, net, penempatan pad
+    src/core/contoh.hys   board contoh, dipakai bersama oleh halaman dan uji
     src/core/drc.hys      pemeriksa aturan desain
+    src/core/conn.hys     pemeriksa konektivitas (jalur menggantung)
     src/core/gerber.hys   penulis Gerber RS-274X + Excellon
 
-Menjalankan uji:
+Menjalankan uji mesin inti:
 
     bash tools/test.sh
 
-Keluarannya: 10 berkas siap kirim ke pabrik di `build/out/`.
+Menjalankan halamannya:
+
+    hydra dev
+
+Mengunduh berkas cetak: buka halamannya, tekan tombol Unduh Gerber.
 
 ## Yang sudah teruji
 
@@ -31,6 +39,10 @@ Ujung ke ujung, board 40x25 mm, 5 komponen, 4 net:
 - DRC bersih untuk board yang benar, dan menangkap keenam jenis pelanggaran
   (trace kurus, pin tanpa net, clearance, bor kecil, tembaga ke tepi, footprint
   yang tidak ada di pustaka)
+- Konektivitas: tiap ujung jalur menyentuh pad se-net, via, atau jalur se-net lain.
+  DRC tidak memeriksa ini, dan jalur menggantung baru ketahuan setelah dicetak
+- Ekspor dari halaman menghasilkan 10 berkas, diperiksa dari byte yang benar-benar
+  terunduh
 - Gerber: mode inci 2.6, satuan MOIN, atribut X2 (TF.FileFunction), flash D03,
   draw D01, ditutup M02
 - Excellon: kepala M48, satuan metrik, kode alat T, ditutup M30
@@ -54,9 +66,10 @@ sengaja sedikit lebih longgar supaya tidak ada board lolos tepat di batas.
 ## Rencana
 
 1. ~~Mesin inti: geometri, DRC, Gerber, Excellon~~ selesai
-2. Antarmuka editor: kanvas 2D, daftar komponen, panel properti
-3. Tampilan 3D dengan model komponen bertinggi nyata
-4. Asisten AI di atas perintah terbatas
+2. ~~Halaman pembuktian: papan, panel DRC, ekspor yang bisa diklik~~ selesai
+3. Editor kanvas: menggambar jalur, memindah komponen, panel properti
+4. Tampilan 3D dengan model komponen bertinggi nyata
+5. Asisten AI di atas perintah terbatas
 
 Ruang lingkup lengkap dan yang sengaja **tidak** dikerjakan ada di [BRIEF.md](BRIEF.md).
 
