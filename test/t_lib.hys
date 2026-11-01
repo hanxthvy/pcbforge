@@ -1,0 +1,24 @@
+# [xihanzu-NR]
+# Uji pustaka: angka harus persis sama dengan berkas KiCad aslinya.
+from "./lib.mjs" import lib_names, lib_get, lib_ada
+
+def dekat(a, b, tol):
+    return Math.abs(a - b) <= tol
+
+def utama():
+    nama = lib_names()
+    print("jumlah footprint:", nama.length)
+    r = lib_get("R_0805")
+    print("R_0805 w=", r.w, "h=", r.h, "tinggi=", r.tinggi, "pin=", r.pin, "pad=", r.pad.length)
+    p1 = r.pad[0]
+    print("pad1 x=", p1[1], "y=", p1[2], "w=", p1[3], "h=", p1[4], "bentuk=", p1[5])
+    print("x benar (acuan -0.9125):", dekat(p1[1], -0.9125, 0.0001))
+    print("w benar (acuan 1.025):", dekat(p1[3], 1.025, 0.0001))
+    print("h benar (acuan 1.4):", dekat(p1[4], 1.4, 0.0001))
+    s = lib_get("SOT23")
+    print("SOT23 pad:", s.pad.length, "silk:", s.silk.length > 0)
+    t = lib_get("TO220")
+    print("TO220 jenis pad:", t.pad[0][6], "bor:", t.pad[0][7])
+    print("tidak ada ditolak:", lib_ada("TIDAK_ADA"), lib_get("TIDAK_ADA"))
+
+utama()
