@@ -1,0 +1,243 @@
+# [xihanzu-NR]
+# Pemeriksa aturan desain (DRC). Ini yang menentukan board aman dikirim atau tidak.
+#
+# Cara kerja: semua tembaga diubah jadi dua bentuk saja, ruas garis dan lingkaran,
+# lalu jarak antar pasangan diperiksa. Pasangan yang berada di net yang sama
+# dilewati, karena memang harus bersentuhan.
+#
+# Keterbatasan yang jujur: pad persegi diperlakukan sebagai lingkaran dengan radius
+# setengah sisi terpanjangnya. Untuk pad persegi panjang ini membuat pemeriksaan
+# sedikit lebih ketat dari kenyataan (kadang melaporkan pelanggaran yang sebenarnya
+# masih aman), bukan lebih longgar. Untuk alat pengaman arah salahnya benar.
+
+from "./units.hys" import clamp
+from "./geom.hys" import pt, seg_seg_dist, point_seg_dist
+from "./board.hys" import semua_pad, cari_pad
+from "./lib.hys" import lib_get, lib_ada
+
+JENIS_LW = "lebar-trace"
+JENIS_KL = "clearance"
+JENIS_TEPI = "tepi-board"
+JENIS_BOR = "bor"
+JENIS_ANNULAR = "annular-ring"
+JENIS_YATIM = "pin-yatim"
+
+
+export def radius_pad(pd):
+    # Radius perkiraan untuk pemeriksaan jarak. Lihat catatan di kepala berkas.
+    if pd.bentuk == "circle":
+        return pd.w / 2
+    return Math.max(pd.w, pd.h) / 2
+
+
+export def kumpulkan_tembaga(b, layer):
+    # Semua tembaga di satu lapisan, dalam bentuk ruas dan titik.
+    item = []
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            # Pad SMD hanya di sisi tempat komponen duduk. Pad tembus di dua sisi.
+            if pd.jenis != "tht" and p.side != layer:
+                continue
+            item.push({
+                tipe: "pad", x: pd.x, y: pd.y, r: radius_pad(pd),
+                w: pd.w, h: pd.h, bor: pd.bor, jenis_pad: pd.jenis,
+                ref: p.ref, pad: pd.nama,
+                net: net_pin(b, p.ref, pd.nama),
+                layer: layer,
+            })
+    for n in b.nets:
+        for t in n.trace:
+            if t.layer != layer:
+                continue
+            i = 0
+            while i < t.pts.length - 1:
+                item.push({
+                    tipe: "ruas",
+                    a: t.pts[i], b2: t.pts[i + 1],
+                    lebar: t.lebar, net: n.nama, layer: layer,
+                })
+                i += 1
+        for v in n.via:
+            d = v.diameter
+            if d == undefined:
+                d = v.bor + 2 * b.aturan.annular_min + 0.2
+            item.push({
+                tipe: "pad", x: v.x, y: v.y, r: d / 2, w: d, h: d,
+                bor: v.bor, jenis_pad: "via", ref: "VIA", pad: "-",
+                net: n.nama, layer: layer,
+            })
+    return item
+
+
+export def net_pin(b, ref, pad):
+    for n in b.nets:
+        for p in n.pin:
+            if p.ref == ref and p.pad == pad:
+                return n.nama
+    return null
+
+
+export def sama_net(a, c):
+    # Dua item di net yang sama memang harus bersentuhan, jadi bukan pelanggaran.
+    if a.net == null or c.net == null:
+        return false
+    return a.net == c.net
+
+
+export def jarak_item(a, c):
+    # Jarak sisi ke sisi antara dua item tembaga, dalam milimeter.
+    if a.tipe == "pad" and c.tipe == "pad":
+        d = Math.sqrt((a.x - c.x) * (a.x - c.x) + (a.y - c.y) * (a.y - c.y))
+        return d - a.r - c.r
+    if a.tipe == "ruas" and c.tipe == "ruas":
+        s1 = { a: a.a, b: a.b2 }
+        s2 = { a: c.a, b: c.b2 }
+        return seg_seg_dist(s1, s2) - a.lebar / 2 - c.lebar / 2
+    # satu ruas, satu pad
+    ruas = a
+    pad = c
+    if a.tipe == "pad":
+        ruas = c
+        pad = a
+    s = { a: ruas.a, b: ruas.b2 }
+    return point_seg_dist(pt(pad.x, pad.y), s) - pad.r - ruas.lebar / 2
+
+
+export def periksa(b):
+    # Mengembalikan daftar temuan. Setiap temuan punya lokasi, jadi bisa ditunjuk
+    # di layar dan bisa dibaca AI tanpa menebak.
+    temuan = []
+
+    # 1. Lebar trace
+    for n in b.nets:
+        for t in n.trace:
+            if t.lebar + 0.000001 < b.aturan.lebar_trace_min:
+                temuan.push({
+                    jenis: JENIS_LW, net: n.nama,
+                    x: t.pts[0].x, y: t.pts[0].y,
+                    pesan: f"lebar trace {t.lebar} mm kurang dari minimum {b.aturan.lebar_trace_min} mm",
+                })
+
+    # 2. Bor dan annular ring
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.jenis != "tht":
+                continue
+            if pd.bor + 0.000001 < b.aturan.bor_min:
+                temuan.push({
+                    jenis: JENIS_BOR, ref: p.ref, pad: pd.nama, x: pd.x, y: pd.y,
+                    pesan: f"bor {pd.bor} mm kurang dari minimum {b.aturan.bor_min} mm",
+                })
+            ring = (Math.min(pd.w, pd.h) - pd.bor) / 2
+            if ring + 0.000001 < b.aturan.annular_min:
+                temuan.push({
+                    jenis: JENIS_ANNULAR, ref: p.ref, pad: pd.nama, x: pd.x, y: pd.y,
+                    pesan: f"annular ring {round3(ring)} mm kurang dari minimum {b.aturan.annular_min} mm",
+                })
+    for n in b.nets:
+        for v in n.via:
+            if v.bor + 0.000001 < b.aturan.bor_min:
+                temuan.push({
+                    jenis: JENIS_BOR, net: n.nama, x: v.x, y: v.y,
+                    pesan: f"bor via {v.bor} mm kurang dari minimum {b.aturan.bor_min} mm",
+                })
+
+    # 3. Clearance, antar lapisan dipisah
+    for layer in ["F", "B"]:
+        item = kumpulkan_tembaga(b, layer)
+        i = 0
+        while i < item.length:
+            j = i + 1
+            while j < item.length:
+                a = item[i]
+                c = item[j]
+                if sama_net(a, c) == false:
+                    d = jarak_item(a, c)
+                    if d + 0.000001 < b.aturan.clearance_min:
+                        temuan.push({
+                            jenis: JENIS_KL, layer: layer,
+                            x: (titik_tengah_x(a, c)), y: titik_tengah_y(a, c),
+                            a: nama_item(a), b: nama_item(c),
+                            pesan: f"clearance {round3(d)} mm kurang dari {b.aturan.clearance_min} mm",
+                        })
+                j += 1
+            i += 1
+
+    # 4. Jarak ke tepi board
+    for layer in ["F", "B"]:
+        for it in kumpulkan_tembaga(b, layer):
+            jauh = jarak_ke_tepi(b, it)
+            if jauh + 0.000001 < b.aturan.tepi_board_min:
+                temuan.push({
+                    jenis: JENIS_TEPI, layer: layer, x: it.x, y: it.y,
+                    pesan: f"tembaga {round3(jauh)} mm dari tepi, minimum {b.aturan.tepi_board_min} mm",
+                })
+
+    # 5. Pin yang tidak punya net, atau net yang hanya punya satu pin
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if net_pin(b, p.ref, pd.nama) == null:
+                temuan.push({
+                    jenis: JENIS_YATIM, ref: p.ref, pad: pd.nama, x: pd.x, y: pd.y,
+                    pesan: f"{p.ref} pad {pd.nama} belum masuk net mana pun",
+                })
+    return temuan
+
+
+export def jarak_ke_tepi(b, it):
+    if it.tipe == "pad":
+        x = it.x
+        y = it.y
+        r = it.r
+    else:
+        x = (it.a.x + it.b2.x) / 2
+        y = (it.a.y + it.b2.y) / 2
+        r = it.lebar / 2
+    d = Math.min(x - r, y - r, b.outline.lebar - x - r, b.outline.tinggi - y - r)
+    return d
+
+
+export def titik_tengah_x(a, c):
+    if a.tipe == "pad":
+        return a.x
+    if c.tipe == "pad":
+        return c.x
+    return (a.a.x + a.b2.x) / 2
+
+
+export def titik_tengah_y(a, c):
+    if a.tipe == "pad":
+        return a.y
+    if c.tipe == "pad":
+        return c.y
+    return (a.a.y + a.b2.y) / 2
+
+
+export def nama_item(it):
+    if it.tipe == "pad":
+        if it.ref == "VIA":
+            return f"via({it.net})"
+        return f"{it.ref}.{it.pad}"
+    if it.net == null:
+        return "trace"
+    return f"trace({it.net})"
+
+
+export def round3(v):
+    return Math.round(v * 1000) / 1000
+
+
+export def ringkas_drc(temuan):
+    # Hitungan per jenis, untuk laporan singkat.
+    hitung = {}
+    for t in temuan:
+        if hitung[t.jenis] == undefined:
+            hitung[t.jenis] = 0
+        hitung[t.jenis] += 1
+    return hitung
