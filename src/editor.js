@@ -63,7 +63,7 @@ export function papan_alat(kanvas, opsi) {
     // pasti ada, dan yang tidak sampai berubah jadi pesan yang terlihat, bukan mati
     // tanpa jejak.
     const G = {}
-    for (const k of ['ubah', 'pindah', 'hapusRef', 'gambarJalur', 'gambarZona', 'pilih', 'pesan', 'koor']) {
+    for (const k of ['ubah', 'pindah', 'hapusRef', 'gambarJalur', 'gambarZona', 'tambahVia', 'pilih', 'pesan', 'koor']) {
         const f = opsi[k]
         G[k] = typeof f === 'function' ? f : ((...args) => {
             if (k !== 'pesan') {
@@ -102,6 +102,7 @@ export function papan_alat(kanvas, opsi) {
         sorot: '',
         ukur: null,
         modeUkur: null,
+        saring: '',   // selection filter: hanya objek jenis ini yang bisa dipilih
         rasio: 1,
         lebarCss: 800,
         tinggiCss: opsi.tinggiCss || 540,
@@ -658,7 +659,21 @@ export function papan_alat(kanvas, opsi) {
 
     // ---------- pemilihan ----------
 
+    a.bolehPilih = (jenis) => {
+        // Selection filter: membatasi apa yang bisa DIPILIH di kanvas.
+        //
+        // Hanya berlaku untuk mode pilih. Kalau berlaku juga di mode lain, menggambar
+        // jalur atau zona jadi mustahil begitu saringnya bukan "semua" — dan itu
+        // membuat alatnya rusak, bukan berguna.
+        if (a.saring === '') return true
+        if (a.mode !== 'pilih') return true
+        if (jenis === 'komponen') return a.saring !== 'jalur'
+        if (jenis === 'jalur') return a.saring === 'jalur'
+        return true
+    }
+
     a.komponenDi = (p) => {
+        if (a.bolehPilih('komponen') === false) return null
         // Dari yang paling atas ke bawah, supaya yang tampak di atas itu terpilih.
         let i = a.b.parts.length - 1
         while (i >= 0) {
@@ -694,6 +709,14 @@ export function papan_alat(kanvas, opsi) {
         const p = a.titik(ev)
         const st = G.status()
 
+        if (a.mode === 'via') {
+            // Satu klik menaruh via di net aktif. Via adalah cara pindah lapisan di
+            // tengah jalur, dan di board dua lapis itu alat yang paling sering dipakai
+            // setelah gambar jalur.
+            const q = a.snapTitik(p)
+            G.tambahVia(q.x, q.y)
+            return
+        }
         if (a.mode === 'zona') {
             // Seret persegi untuk membuat bidang tembaga. Sudut pertama di sini,
             // sudut kedua saat tetikus dilepas.
@@ -950,7 +973,7 @@ export function papan_alat(kanvas, opsi) {
         if (a.mode === 'jalur' && m !== 'jalur') a.selesaiJalur()
         if (a.mode === 'zona' && m !== 'zona') a.zonaBaru = null
         a.mode = m
-        kanvas.style.cursor = (m === 'jalur' || m === 'zona') ? 'crosshair'
+        kanvas.style.cursor = (m === 'jalur' || m === 'zona' || m === 'via') ? 'crosshair'
             : (m === 'hapus' ? 'not-allowed' : 'default')
     }
 
@@ -996,6 +1019,11 @@ export function papan_alat(kanvas, opsi) {
 
     a.setRats = (r) => {
         a.rats = r || []
+        a.gambar()
+    }
+
+    a.setSaring = (jenis) => {
+        a.saring = jenis || ''
         a.gambar()
     }
 

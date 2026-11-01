@@ -29,7 +29,7 @@ from "./core/kesiapan.hys" import periksa_siap, ringkas_siap
 from "./core/gerber.hys" import gerber_semua
 from "./core/kit.hys" import bom, cpl, panduan
 from "./core/zip.hys" import zip_buat
-from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran
+from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran, via_tambah
 from "./core/zone.hys" import zona_tambah, zona_hapus
 from "./core/alat.hys" import part_kunci, part_buka, grup_buat, grup_lepas, grup_anggota, ratak, bagi_rata, teks_tambah, keepout_tambah
 from "./core/proyek.hys" import ke_teks, dari_teks, simpan_lokal, muat_lokal, ada_lokal, nama_berkas
@@ -255,6 +255,25 @@ def terapkan_berkas(ev, setB, setTerpilih, setPesan):
     setPesan("Berkas dimuat. " + str(h.b.parts.length) + " komponen, " + str(h.b.nets.length) + " net.")
 
 
+def h_via(b, setB, setPesan, net, x, y):
+    h = via_tambah(b, net, x, y)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+        setPesan("Via ditaruh di net " + net + ".")
+
+
+def h_aturan(b, setB, setPesan, nama, nilai):
+    # Aturan desain harus bisa diubah: kemampuan pabrik berbeda-beda, dan aturan yang
+    # tidak bisa disesuaikan berarti alatnya hanya cocok untuk satu pabrik.
+    if nilai <= 0:
+        setPesan("Nilai aturan harus lebih besar dari nol.")
+        return
+    c = board_salin(b)
+    c.aturan[nama] = nilai
+    setB(c)
+    setPesan("")
+
+
 def h_kunci(b, setB, setPesan, ref, kunci):
     h = part_kunci(b, ref) if kunci else part_buka(b, ref)
     if h_pesan(h, setPesan):
@@ -326,6 +345,8 @@ def sambung_alat(kanvas, rujukan, setTerpilih, setPesan, setB):
             jalur_tambah(rujukan.current.b(), net, lap, lb, pts), false),
         gambarZona: lambda net, lap, x1, y1, x2, y2: rujukan.current.pakai(
             zona_tambah(rujukan.current.b(), net, lap, x1, y1, x2, y2, 0.3), false),
+        tambahVia: lambda x, y: rujukan.current.pakai(
+            via_tambah(rujukan.current.b(), rujukan.current.status().net, x, y), false),
         pilih: lambda ref: rujukan.current.pilih(ref),
         status: lambda: rujukan.current.status(),
         pesan: lambda m: rujukan.current.lihat(m),
@@ -420,7 +441,7 @@ component PanelProperti(b, terpilih, geser, putar, sisi, hapus, netkan, setNilai
 
 component KartuTampilan(b, layer, setLayer, tampil, setTampil, kisi, setKisi,
                       snap, setSnap, warnaLapisan, setWarnaLapisan, sorot, setSorot,
-                      rats, temuan):
+                      rats, temuan, saring, setSaring):
     # Mengikuti panel Appearance di KiCad: tiga tab, Lapisan, Objek, Net.
     [tab, setTab] = useState("lapisan")
     div(className="kartu"):
@@ -489,6 +510,13 @@ component KartuTampilan(b, layer, setLayer, tampil, setTampil, kisi, setKisi,
                 label(className="label"): "Rapatkan ke kisi"
                 button(className=("seg" + (" aktif" if snap else "")),
                        onClick=lambda: setSnap(not snap)): ("Nyala" if snap else "Mati")
+            div(className="masuk-baris"):
+                label(className="label"): "Bisa dipilih"
+                div(className="segmen"):
+                    button(className=("seg" + (" aktif" if saring == "" else "")),
+                           onClick=lambda: setSaring("")): "Semua"
+                    button(className=("seg" + (" aktif" if saring == "komponen" else "")),
+                           onClick=lambda: setSaring("komponen")): "Komponen"
             div(className="masuk-baris"):
                 label(className="label"): "Tampilkan kisi"
                 button(className=("seg" + (" aktif" if tampil.indexOf("G") >= 0 else "")),
@@ -618,6 +646,7 @@ component Editor():
     [warnaLapisan, setWarnaLapisan] = useState({ F: "#e8b55c", B: "#5b8dee", S: "#e2e8f0", E: "#e8d96a" })
     [tampil3d, setTampil3d] = useState(false)
     [teksBaru, setTeksBaru] = useState("")
+    [saring, setSaring] = useState("")
 
     kanvasRef = useRef(null)
     alatRef = useRef(null)
@@ -658,6 +687,7 @@ component Editor():
     useEffect(lambda: set_sorot(alatRef.current, sorot), [sorot])
     useEffect(lambda: warnai(alatRef.current, warnaLapisan), [warnaLapisan])
     useEffect(lambda: atur_3d(alatRef.current, tampil3d), [tampil3d])
+    useEffect(lambda: atur_saring(alatRef.current, saring), [saring])
 
     div(className="kerja"):
         header(className="kerja-kepala"):
@@ -716,6 +746,8 @@ component Editor():
                                onClick=lambda: setMode("ukur"), title="Ukur jarak (M)"): "Ukur"
                         button(className=("seg" + (" aktif" if mode == "zona" else "")),
                                onClick=lambda: setMode("zona"), title="Bidang tembaga (Z)"): "Zona"
+                        button(className=("seg" + (" aktif" if mode == "via" else "")),
+                               onClick=lambda: setMode("via"), title="Via: pindah lapisan (B)"): "Via"
                     if mode == "jalur":
                         div(className="masuk-baris"):
                             label(className="label"): "Lapisan"
@@ -735,6 +767,10 @@ component Editor():
                             p(className="dim kecil"):
                                 f"Masuk ke net {netAktif}, lapisan {layer}. Klik untuk "
                                 "menambah titik; klik ganda atau klik kanan untuk selesai."
+                    elif mode == "via":
+                        p(className="dim kecil"):
+                            f"Klik di kanvas untuk menaruh via di net {netAktif}. "
+                            "Via menghubungkan lapisan atas dan bawah."
                     elif mode == "zona":
                         p(className="dim kecil"):
                             "Seret persegi di kanvas untuk membuat bidang tembaga. "
@@ -782,6 +818,30 @@ component Editor():
                         p(className="dim kecil"):
                             "Belum ada bidang tembaga. Bidang ground hampir selalu dipakai "
                             "di board dua lapis."
+                Kartu(judul="Aturan desain"):
+                    p(className="dim kecil"):
+                        "Angka periksa mengikuti kemampuan pabrik. Ubah kalau memakai "
+                        "pabrik dengan kemampuan berbeda."
+                    div(className="masuk-baris"):
+                        label(className="label"): "Lebar min (mm)"
+                        input(className="masuk angka", type="number", step="0.05", min="0.05",
+                              value=b.aturan.lebar_trace_min,
+                              onChange=lambda ev: h_aturan(b, setB, setPesan, "lebar_trace_min", parseFloat(ev.target.value)))
+                    div(className="masuk-baris"):
+                        label(className="label"): "Jarak min (mm)"
+                        input(className="masuk angka", type="number", step="0.05", min="0.05",
+                              value=b.aturan.clearance_min,
+                              onChange=lambda ev: h_aturan(b, setB, setPesan, "clearance_min", parseFloat(ev.target.value)))
+                    div(className="masuk-baris"):
+                        label(className="label"): "Ke tepi (mm)"
+                        input(className="masuk angka", type="number", step="0.05", min="0.05",
+                              value=b.aturan.tepi_board_min,
+                              onChange=lambda ev: h_aturan(b, setB, setPesan, "tepi_board_min", parseFloat(ev.target.value)))
+                    div(className="masuk-baris"):
+                        label(className="label"): "Bor min (mm)"
+                        input(className="masuk angka", type="number", step="0.05", min="0.1",
+                              value=b.aturan.bor_min,
+                              onChange=lambda ev: h_aturan(b, setB, setPesan, "bor_min", parseFloat(ev.target.value)))
                 Kartu(judul="Ukuran board"):
                     div(className="masuk-baris"):
                         label(className="label"): "Lebar (mm)"
@@ -901,6 +961,11 @@ def hitung_rats(alat, b, setRats):
     if alat != null:
         alat.setRats(r)
     setRats(r)
+
+
+def atur_saring(alat, jenis):
+    if alat != null:
+        alat.setSaring(jenis)
 
 
 def atur_3d(alat, nyala):
@@ -1081,6 +1146,8 @@ def pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan):
             setMode("ukur")
         elif k == "z":
             setMode("zona")
+        elif k == "b":
+            setMode("via")
         elif (ev.ctrlKey or ev.metaKey) and k == "s":
             ev.preventDefault()
             rujukan.current.simpan()

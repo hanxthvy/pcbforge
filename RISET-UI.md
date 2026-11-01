@@ -1,4 +1,4 @@
-# RISET — apa yang sebenarnya ada di alat PCB profesional
+# RISET — apa yang ada di alat PCB profesional, dan keadaan PCBForge
 
 Dicatat dari dokumentasi resmi, bukan dari ingatan. Sumbernya di bawah.
 
@@ -12,59 +12,65 @@ Dicatat dari dokumentasi resmi, bukan dari ingatan. Sumbernya di bawah.
    6. Panel Selection Filter apa saja yang bisa dipilih
    7. Kanvas                kisi, asal kisi, snap magnetik
 
-Altium serupa: panel PCB (telusuri berdasarkan komponen atau net), panel Properties di
-kanan untuk item terpilih. EasyEDA Pro menaruh status kanvas di kanan bawah.
+Altium serupa: panel PCB (telusuri per komponen atau net), panel Properties di kanan.
+EasyEDA Pro menaruh status kanvas di kanan bawah.
 
-## Alat menggambar (EasyEDA, daftar lengkap)
+## Alat menggambar (daftar EasyEDA)
 
 Track, Pad, Via, Text, Arc, Circle, Move, Hole, Image, Canvas Origin, Connect Pad to
 Pad, Copper Area, Solid Region, Measure/Dimension, Rect, Group/Ungroup.
 
 Cara menggambar jalur yang dipakai semua alat PCB:
 
-- klik sekali mulai menggambar, klik lagi menambatkan titik
-- klik kanan mengakhiri jalur, klik kanan dua kali keluar dari mode jalur
-- **hotkey ganti lapisan saat menggambar otomatis menyisipkan VIA** dan jalurnya
-  lanjut di lapisan lain
+- klik sekali mulai, klik lagi menambatkan titik
+- klik kanan mengakhiri, klik kanan dua kali keluar dari mode
+- **hotkey ganti lapisan saat menggambar otomatis menyisipkan VIA**
 - tombol `+` dan `-` mengubah lebar jalur saat menggambar, `Tab` membuka kolomnya
 
-## Yang ada di KiCad dan belum ada di PCBForge
+## Keadaan PCBForge
 
-- **Ratsnest / airwire** — garis yang menunjukkan sambungan yang BELUM dibuat. Ini
-  inti alat PCB: tanpa ini orang tidak tahu apa yang masih harus dirutekan.
-- **Panel Appearance** — tab Layers (tampil/sembunyi + warna + lapisan aktif), tab
-  Objects (per jenis objek: pad, jejak, via, teks, zona), tab Nets (daftar net).
-- **Penyorotan net** — satu net dinyalakan, sisanya diredupkan.
-- **Selection filter** — batasi apa yang bisa dipilih (hanya jejak, hanya pad, dst).
-- **Zona tembaga (copper pour)** — bidang ground/power. Ini praktik standar, dan
-  hampir setiap board dua lapis memakainya untuk GND.
-- **Rule area (keepout)** — area yang tidak boleh ditempati tembaga.
-- **Alat ukur** — jarak antara dua titik.
-- **Alat teks** — menaruh tulisan di sablon, di luar penanda komponen.
-- **Via** dengan sisi, ukuran, dan jenis (tembus; blind/buried tidak didukung
-  EasyEDA untuk 2 lapis).
-- **Asal kisi** dan snap magnetik ke pad.
-- **Kunci objek** dan **grup**.
-- **Ratak dan bagi rata** objek.
-- **Panel Selection Filter**.
+### Sudah ada
 
-## Yang sudah ada di PCBForge
+| alat | catatan |
+|---|---|
+| kanvas 2D | kisi, snap, geser, perbesar, ikut ukuran layar |
+| pilih / geser / putar / balik sisi / hapus | dengan pintasan V R Delete Escape |
+| taruh komponen dari pustaka | 29 paket, 235 pad, dari pustaka KiCad resmi |
+| net | buat, daftar, satu komponen masuk net |
+| gambar jalur | lebar dan lapisan bisa diatur, klik ganda atau klik titik sama untuk selesai |
+| alat via | klik menaruh via di net aktif (B) |
+| zona tembaga | seret persegi, dengan pengosongan clearance lewat polaritas terbalik |
+| penanda sablon | ref dan nilai tiap komponen, digambar sebagai goresan huruf |
+| teks sablon | tulisan bebas: nama board, versi, peringatan |
+| keepout | area terlarang untuk tembaga |
+| ratsnest | pohon penghubung minimum, seperti alat profesional |
+| panel Appearance | tiga tab: Lapisan (warna + mata + aktif), Objek, Net |
+| penyorotan net | satu net nyala, sisanya diredupkan |
+| selection filter | batasi apa yang bisa dipilih |
+| alat ukur | M, dua klik, jarak dan selisih X/Y |
+| kunci | mencegah komponen bergeser tanpa sengaja |
+| grup | geser dan putar sekelompok komponen bersama |
+| ratak dan bagi rata | kiri/atas/sejajar, bagi datar/tegak |
+| aturan desain bisa diubah | lebar, jarak, tepi, bor |
+| bilah status | posisi kursor, kisi, alat, snap, undo, redo, zoom |
+| undo / redo | riwayat board, Ctrl+Z / Ctrl+Y |
+| simpan dan buka | penyimpanan browser, berkas .pcbforge.json, muat otomatis |
+| ekspor | Gerber 10 lapisan + Excellon + BOM + CPL + panduan, satu zip |
+| periksa | DRC, konektivitas, kesiapan cetak, penanda di kanvas |
+| tampilan 3D | jalur, via, komponen berketinggian asli, bisa diputar |
 
-Kanvas dengan kisi dan snap, geser dan perbesar, pilih/geser/putar/balik sisi/hapus,
-taruh komponen, net, gambar jalur dengan lebar dan lapisan, periksa aturan desain,
-periksa konektivitas, penanda sablon, ekspor Gerber + Excellon + BOM + CPL, satu
-berkas zip untuk pabrik.
+### Belum ada
 
-## Urutan pengerjaan berikutnya, menurut kepentingan
-
-1. Ratsnest (airwire) — tanpa ini alat PCB tidak bisa dipakai merutekan
-2. Panel Appearance: tab Layers dan tab Nets, plus penyorotan net
-3. Ganti lapisan saat menggambar menyisipkan via
-4. Alat ukur
-5. Zona tembaga (copper pour) untuk ground
-6. Alat teks di sablon
-7. Selection filter
-8. Kunci dan grup, ratak dan bagi rata
+| yang kurang | seberapa perlu |
+|---|---|
+| editor footprint sendiri | perlu untuk komponen di luar pustaka, tapi 29 paket menutup sebagian besar board dua lapis |
+| tembaga polygonal (bukan persegi) | perlu untuk board bersudut tidak beraturan |
+| ganti lapisan saat menggambar otomatis menyisipkan via | kenyamanan; sekarang taruh via dulu lalu gambar lanjut |
+| pengukuran dengan snap ke tepi pad | kenyamanan |
+| pindah jalur setelah digambar (tarik simpul) | perlu saat merapikan |
+| lapisan sablon dan mask bisa disunting langsung | sekarang hanya tampilan |
+| asal kisi bisa dipindah | kenyamanan |
+| ODB++ dan IPC-2581 | tidak dipakai JLCPCB untuk board dua lapis |
 
 ## Sumber
 
