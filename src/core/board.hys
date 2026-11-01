@@ -1,0 +1,202 @@
+# [xihanzu-NR]
+# Model dokumen board. Ini sumber kebenarannya, dan bentuknya sengaja sederhana:
+# JSON biasa, tanpa kelas, tanpa state tersembunyi di dalamnya.
+#
+# Alasan bentuknya data, bukan fungsi: AI menyunting dokumen ini lewat perintah
+# terbatas, editor visual menyunting dokumen yang sama lewat perintah yang sama, dan
+# riwayat revisi jadi daftar versi dokumen. Kalau state-nya tersebar di objek,
+# keduanya akan berkelahi.
+
+from "./units.hys" import clamp, bulat
+from "./lib.hys" import lib_get, lib_ada
+
+SATUAN_VERSI = 1
+
+
+export def aturan_default():
+    # Aturan JLCPCB 2 layer. Angka periksa sengaja lebih longgar sedikit dari
+    # kemampuan pabrik, supaya tidak ada board lolos tepat di batas.
+    return {
+        lebar_trace_min: 0.15,
+        clearance_min: 0.2,
+        tepi_board_min: 0.3,
+        annular_min: 0.13,
+        bor_min: 0.3,
+        lebar_trace_default: 0.25,
+    }
+
+
+export def board_baru(nama):
+    b = {
+        versi: SATUAN_VERSI,
+        meta: { nama: nama, dibuat: "" },
+        aturan: aturan_default(),
+        outline: { lebar: 50, tinggi: 30, sudut: "bulat", radius: 2, lubang: [] },
+        parts: [],
+        nets: [],
+    }
+    return b
+
+
+export def board_salin(b):
+    # Salinan dalam. Dipakai DRC untuk menguji perubahan sebelum diterapkan:
+    # kalau perintah ditolak, dokumen asli belum tersentuh sama sekali.
+    return JSON.parse(JSON.stringify(b))
+
+
+# ---------- komponen ----------
+
+export def ref_berikutnya(b, prefix):
+    # Nomor terkecil yang belum dipakai, jadi R1, R2, R3 dan bukan R4 setelah R2
+    # dihapus. Deterministik, supaya riwayat revisi tidak berisik.
+    n = 1
+    while true:
+        calon = f"{prefix}{n}"
+        dipakai = false
+        for p in b.parts:
+            if p.ref == calon:
+                dipakai = true
+        if dipakai == false:
+            return calon
+        n += 1
+
+
+export def cari_part(b, ref):
+    for p in b.parts:
+        if p.ref == ref:
+            return p
+    return null
+
+
+export def semua_pad(part, lib):
+    # Posisi pad di koordinat board, memperhitungkan rotasi dan sisi pemasangan.
+    # Sisi bawah dicerminkan mendatar, sesuai kebiasaan pabrik: komponen dipindah ke
+    # bawah dengan sumbu X dibalik, jadi nomor pad tetap terbaca dari atas board.
+    out = []
+    rad = part.rot * Math.PI / 180
+    cs = Math.cos(rad)
+    sn = Math.sin(rad)
+    cermin = 1
+    if part.side == "B":
+        cermin = -1
+    for p in lib.pad:
+        px = p[1] * cermin
+        py = p[2]
+        rx = px * cs - py * sn
+        ry = px * sn + py * cs
+        out.push({
+            nama: p[0],
+            x: rx + part.x,
+            y: ry + part.y,
+            w: p[3],
+            h: p[4],
+            bentuk: p[5],
+            jenis: p[6],
+            bor: p[7],
+            rot: p[8] + part.rot,
+            rot_lokal: p[8],
+        })
+    return out
+
+
+export def cari_pad(b, ref, nomor):
+    part = cari_part(b, ref)
+    if part == null:
+        return null
+    if lib_ada(part.lib) == false:
+        return null
+    for p in semua_pad(part, lib_get(part.lib)):
+        if p.nama == nomor:
+            return p
+    return null
+
+
+# ---------- net ----------
+
+export def net_baru(b, nama):
+    if net_cari(b, nama) != null:
+        return null
+    n = { nama: nama, pin: [], trace: [], via: [] }
+    b.nets.push(n)
+    return n
+
+
+export def net_cari(b, nama):
+    for n in b.nets:
+        if n.nama == nama:
+            return n
+    return null
+
+
+export def net_pin_tambah(b, nama, ref, pad):
+    n = net_cari(b, nama)
+    if n == null:
+        n = net_baru(b, nama)
+    for p in n.pin:
+        if p.ref == ref and p.pad == pad:
+            return true
+    n.pin.push({ ref: ref, pad: pad })
+    return true
+
+
+export def net_dari_pin(b, ref, pad):
+    # Net yang memuat satu pin. Dipakai AI untuk bertanya "pin ini tersambung ke apa".
+    for n in b.nets:
+        for p in n.pin:
+            if p.ref == ref and p.pad == pad:
+                return n.nama
+    return null
+
+
+export def net_trace_tambah(b, nama, layer, lebar, pts):
+    n = net_cari(b, nama)
+    if n == null:
+        return null
+    t = { layer: layer, lebar: lebar, pts: pts }
+    n.trace.push(t)
+    return t
+
+
+# ---------- tinjauan ----------
+
+export def ringkas(b):
+    # Ringkasan untuk AI. Sengaja tidak memuat seluruh dokumen: AI dapat daftar
+    # komponen dan net, dan kalau butuh detail ia bertanya lewat perintah lain.
+    parts = []
+    for p in b.parts:
+        parts.push({
+            ref: p.ref, lib: p.lib, nilai: p.nilai,
+            x: bulat(p.x, 2), y: bulat(p.y, 2), rot: p.rot, side: p.side,
+        })
+    nets = []
+    for n in b.nets:
+        nets.push({ nama: n.nama, pin: n.pin.length, trace: n.trace.length, via: n.via.length })
+    return {
+        nama: b.meta.nama,
+        outline: { lebar: b.outline.lebar, tinggi: b.outline.tinggi },
+        parts: parts,
+        nets: nets,
+    }
+
+
+export def luas_copper(b):
+    # Perkiraan luas tembaga, untuk laporan. Bukan untuk DRC.
+    total = 0
+    for p in b.parts:
+        if lib_ada(p.lib):
+            for pd in semua_pad(p, lib_get(p.lib)):
+                total += pd.w * pd.h
+    return total
+
+
+export def cek_ukuran(b):
+    # Pemeriksaan ringan yang tidak butuh geometri penuh. DRC lengkap ada di drc.hys.
+    err = []
+    if b.outline.lebar <= 0 or b.outline.tinggi <= 0:
+        err.push("ukuran board harus lebih besar dari nol")
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            err.push(f"{p.ref}: footprint '{p.lib}' tidak ada di pustaka")
+        if p.x < 0 or p.y < 0 or p.x > b.outline.lebar or p.y > b.outline.tinggi:
+            err.push(f"{p.ref}: di luar area board")
+    return err
