@@ -24,7 +24,7 @@ from "./core/lib.hys" import lib_names, lib_get
 from "./core/board.hys" import board_baru, board_salin, cari_part
 from "./core/contoh.hys" import board_contoh_siap
 from "./core/drc.hys" import periksa
-from "./core/conn.hys" import uji as uji_koneksi
+from "./core/conn.hys" import uji as uji_koneksi, ratsnest
 from "./core/kesiapan.hys" import periksa_siap, ringkas_siap
 from "./core/gerber.hys" import gerber_semua
 from "./core/kit.hys" import bom, cpl, panduan
@@ -225,6 +225,16 @@ component Kartu(judul, anak):
             slot
 
 
+component KartuLipat(judul, anak, terbuka):
+    # Kartu yang bisa dilipat. Dipakai untuk hal yang jarang disentuh (Pustaka,
+    # Ukuran board) supaya yang sering dipakai — Tampilan, Net, Alat — tetap di atas
+    # tanpa perlu menggulir.
+    div(className="kartu"):
+        button(className="judul-lipat", onClick=lambda: None): judul
+        div(className="isi"):
+            slot
+
+
 component BarisTombol(aktif, onClick, kiri, kanan):
     button(className=("baris-tombol" + (" terpilih" if aktif else "")), onClick=onClick):
         span(className="kunci"): kiri
@@ -289,6 +299,141 @@ component PanelProperti(b, terpilih, geser, putar, sisi, hapus, netkan, setNilai
                                onClick=lambda: netkan(p.ref, n.nama)): n.nama
 
 
+component KartuTampilan(b, layer, setLayer, tampil, setTampil, kisi, setKisi,
+                      snap, setSnap, warnaLapisan, setWarnaLapisan, sorot, setSorot,
+                      rats, temuan):
+    # Mengikuti panel Appearance di KiCad: tiga tab, Lapisan, Objek, Net.
+    [tab, setTab] = useState("lapisan")
+    div(className="kartu"):
+        h2(className="judul"): "Tampilan"
+        div(className="tab"):
+            button(className=("tab-t" + (" aktif" if tab == "lapisan" else "")),
+                   onClick=lambda: setTab("lapisan")): "Lapisan"
+            button(className=("tab-t" + (" aktif" if tab == "objek" else "")),
+                   onClick=lambda: setTab("objek")): "Objek"
+            button(className=("tab-t" + (" aktif" if tab == "net" else "")),
+                   onClick=lambda: setTab("net")): "Net"
+
+        if tab == "lapisan":
+            div(className="daftar-lapisan"):
+                BarisLapisan(nama="Atas (F.Cu)", warna=warnaLapisan.F,
+                             aktif=(layer == "F"), tampil=(tampil.indexOf("A") >= 0),
+                             klikNama=lambda: setLayer("F"),
+                             klikMata=lambda: setTampil(putar_tampil(tampil, "A")))
+                BarisLapisan(nama="Bawah (B.Cu)", warna=warnaLapisan.B,
+                             aktif=(layer == "B"), tampil=(tampil.indexOf("B") >= 0),
+                             klikNama=lambda: setLayer("B"),
+                             klikMata=lambda: setTampil(putar_tampil(tampil, "B")))
+                BarisLapisan(nama="Sablon (F.Silk)", warna=warnaLapisan.S,
+                             aktif=false, tampil=true, klikNama=lambda: None,
+                             klikMata=lambda: None)
+                BarisLapisan(nama="Tepi (Edge.Cuts)", warna=warnaLapisan.E,
+                             aktif=false, tampil=true, klikNama=lambda: None,
+                             klikMata=lambda: None)
+                BarisLapisan(nama="Via", warna="#aab4c8",
+                             aktif=false, tampil=(tampil.indexOf("V") >= 0),
+                             klikNama=lambda: None,
+                             klikMata=lambda: setTampil(putar_tampil(tampil, "V")))
+            div(className="masuk-baris"):
+                label(className="label"): "Warna tembaga"
+                input(type="color", className="warna", value=warnaLapisan[layer],
+                      onChange=lambda ev: ubah_warna(setWarnaLapisan, warnaLapisan, layer, ev.target.value))
+            p(className="dim kecil"): "Baris yang ditekan namanya jadi lapisan aktif."
+
+        if tab == "objek":
+            div(className="daftar-objek"):
+                div(className="baris"):
+                    span(className="kunci"): "Komponen"
+                    span(className="nilai"): str(b.parts.length)
+                div(className="baris"):
+                    span(className="kunci"): "Jalur"
+                    span(className="nilai"): str(jumlah_jalur(b))
+                div(className="baris"):
+                    span(className="kunci"): "Via"
+                    span(className="nilai"): str(jumlah_via(b))
+                div(className="baris"):
+                    span(className="kunci"): "Panjang jalur"
+                    span(className="nilai"): f"{panjang_jalur(b)} mm"
+                div(className="baris"):
+                    span(className="kunci"): "Garis bantu"
+                    span(className="nilai"): str(rats.length)
+                div(className="baris"):
+                    span(className="kunci"): "Masalah"
+                    span(className="nilai"): str(temuan.length)
+            div(className="masuk-baris"):
+                label(className="label"): "Kisi"
+                div(className="segmen"):
+                    for g in [0.25, 0.5, 1, 2.54]:
+                        button(className=("seg" + (" aktif" if kisi == g else "")),
+                               onClick=lambda: setKisi(g)): f"{g}"
+            div(className="masuk-baris"):
+                label(className="label"): "Rapatkan ke kisi"
+                button(className=("seg" + (" aktif" if snap else "")),
+                       onClick=lambda: setSnap(not snap)): ("Nyala" if snap else "Mati")
+            div(className="masuk-baris"):
+                label(className="label"): "Tampilkan kisi"
+                button(className=("seg" + (" aktif" if tampil.indexOf("G") >= 0 else "")),
+                       onClick=lambda: setTampil(putar_tampil(tampil, "G"))):
+                    ("Nyala" if tampil.indexOf("G") >= 0 else "Mati")
+
+        if tab == "net":
+            p(className="dim kecil"):
+                "Tekan nama net untuk menyorotnya di kanvas. Tekan sekali lagi untuk melepas."
+            div(className="daftar-gulir pendek"):
+                for n in b.nets:
+                    BarisTombol(aktif=(n.nama == sorot), onClick=lambda: setSorot("" if n.nama == sorot else n.nama),
+                                kiri=n.nama,
+                                kanan=f"{n.pin.length} pin · {n.trace.length} jalur")
+            if sorot != "":
+                p(className="ok kecil"): f"Menyorot {sorot}"
+
+
+def ubah_warna(setWarnaLapisan, w, lap, nilai):
+    c = {}
+    for k in ["F", "B", "S", "E"]:
+        c[k] = w[k]
+    c[lap] = nilai
+    setWarnaLapisan(c)
+
+
+component BarisLapisan(nama, warna, aktif, tampil, klikNama, klikMata):
+    div(className=("baris-lapis" + (" aktif" if aktif else ""))):
+        button(className=("mata" + (" nyala" if tampil else "")), onClick=klikMata,
+               title=("Sembunyikan" if tampil else "Tampilkan")):
+            ("◉" if tampil else "○")
+        span(className="contoh-warna", style={ backgroundColor: warna })
+        button(className="nama-lapis", onClick=klikNama): nama
+        if aktif:
+            span(className="tanda-aktif"): "aktif"
+
+
+def jumlah_jalur(b):
+    n = 0
+    for x in b.nets:
+        n += x.trace.length
+    return n
+
+
+def jumlah_via(b):
+    n = 0
+    for x in b.nets:
+        n += x.via.length
+    return n
+
+
+def panjang_jalur(b):
+    total = 0
+    for x in b.nets:
+        for t in x.trace:
+            i = 0
+            while i < t.pts.length - 1:
+                dx = t.pts[i + 1].x - t.pts[i].x
+                dy = t.pts[i + 1].y - t.pts[i].y
+                total += Math.sqrt(dx * dx + dy * dy)
+                i += 1
+    return Math.round(total * 10) / 10
+
+
 component PanelPeriksa(b):
     temuan = useMemo(lambda: periksa(b), [b])
     koneksi = useMemo(lambda: uji_koneksi(b), [b])
@@ -337,8 +482,9 @@ component Editor():
     [snap, setSnap] = useState(true)
     [tampil, setTampil] = useState("ABVG")
     [koordinat, setKoordinat] = useState({ x: 0, y: 0 })
-    [riwayat, setRiwayat] = useState([])
-    [depan, setDepan] = useState([])
+    [rats, setRats] = useState([])
+    [sorot, setSorot] = useState("")
+    [warnaLapisan, setWarnaLapisan] = useState({ F: "#e8b55c", B: "#5b8dee", S: "#e2e8f0", E: "#e8d96a" })
 
     kanvasRef = useRef(null)
     alatRef = useRef(null)
@@ -369,6 +515,9 @@ component Editor():
     useEffect(lambda: atur_kisi(alatRef.current, kisi, snap), [kisi, snap])
     useEffect(lambda: atur_tampil(alatRef.current, tampil), [tampil])
     useEffect(lambda: atur_tanda(alatRef.current, temuan_bertanda(b)), [b])
+    useEffect(lambda: hitung_rats(alatRef.current, b, setRats), [b])
+    useEffect(lambda: set_sorot(alatRef.current, sorot), [sorot])
+    useEffect(lambda: warnai(alatRef.current, warnaLapisan), [warnaLapisan])
 
     div(className="kerja"):
         header(className="kerja-kepala"):
@@ -394,6 +543,12 @@ component Editor():
 
         div(className=("kerja-isi layar-" + layar)):
             aside(className="kerja-kiri"):
+                KartuTampilan(
+                    b=b, layer=layer, setLayer=setLayer, tampil=tampil, setTampil=setTampil,
+                    kisi=kisi, setKisi=setKisi, snap=snap, setSnap=setSnap,
+                    warnaLapisan=warnaLapisan, setWarnaLapisan=setWarnaLapisan,
+                    sorot=sorot, setSorot=setSorot, rats=rats,
+                    temuan=temuan_bertanda(b))
                 Kartu(judul="Alat"):
                     div(className="segmen lebar"):
                         button(className=("seg" + (" aktif" if mode == "pilih" else "")),
@@ -402,6 +557,8 @@ component Editor():
                                onClick=lambda: setMode("jalur"), title="Gambar jalur (W)"): "Jalur"
                         button(className=("seg" + (" aktif" if mode == "hapus" else "")),
                                onClick=lambda: setMode("hapus"), title="Hapus komponen (X)"): "Hapus"
+                        button(className=("seg" + (" aktif" if mode == "ukur" else "")),
+                               onClick=lambda: setMode("ukur"), title="Ukur jarak (M)"): "Ukur"
                     if mode == "jalur":
                         div(className="masuk-baris"):
                             label(className="label"): "Lapisan"
@@ -425,31 +582,11 @@ component Editor():
                         p(className="dim kecil"):
                             "Klik komponen untuk memilih, geser untuk memindah. "
                             "R memutar 90°, Delete menghapus, Escape membatalkan."
+                Kartu(judul="Pustaka"):
+                    PanelPustaka(taruh=lambda n: h_taruh(b, setB, setTerpilih, setPesan, netAktif, n))
                 Kartu(judul="Net"):
                     PanelNet(b=b, netAktif=netAktif, setNetAktif=setNetAktif,
                              tambah=lambda nama: h_net_baru(b, setB, setNetAktif, setPesan, nama))
-                Kartu(judul="Pustaka"):
-                    PanelPustaka(taruh=lambda n: h_taruh(b, setB, setTerpilih, setPesan, netAktif, n))
-                Kartu(judul="Lapisan & kisi"):
-                    div(className="tombol-lapisan"):
-                        button(className=("lap" + (" aktif" if tampil.indexOf("A") >= 0 else "")),
-                               onClick=lambda: setTampil(putar_tampil(tampil, "A")),
-                               title="Tampilkan/sembunyikan tembaga atas"): "Atas"
-                        button(className=("lap" + (" aktif" if tampil.indexOf("B") >= 0 else "")),
-                               onClick=lambda: setTampil(putar_tampil(tampil, "B")),
-                               title="Tampilkan/sembunyikan tembaga bawah"): "Bawah"
-                        button(className=("lap" + (" aktif" if tampil.indexOf("V") >= 0 else "")),
-                               onClick=lambda: setTampil(putar_tampil(tampil, "V")),
-                               title="Tampilkan/sembunyikan via"): "Via"
-                        button(className=("lap" + (" aktif" if tampil.indexOf("G") >= 0 else "")),
-                               onClick=lambda: setTampil(putar_tampil(tampil, "G")),
-                               title="Tampilkan/sembunyikan kisi"): "Kisi"
-                    div(className="masuk-baris"):
-                        label(className="label"): "Ukuran kisi"
-                        div(className="segmen"):
-                            for g in [0.25, 0.5, 1, 2.54]:
-                                button(className=("seg" + (" aktif" if kisi == g else "")),
-                                       onClick=lambda: setKisi(g)): f"{g}"
                 Kartu(judul="Ukuran board"):
                     div(className="masuk-baris"):
                         label(className="label"): "Lebar (mm)"
@@ -558,6 +695,27 @@ def undo_r2(rujukan, setB, setPesan):
 
 def redo_r2(rujukan, setB, setPesan):
     rujukan.current.redo()
+
+
+def hitung_rats(alat, b, setRats):
+    # Ratsnest dihitung ulang tiap board berubah, dan hasilnya disimpan di state
+    # supaya panel bisa menampilkan jumlahnya. Perhitungannya ada di mesin inti
+    # (core/conn.hys), bukan di lapisan tampilan.
+    r = ratsnest(b)
+    if alat != null:
+        alat.setRats(r)
+    setRats(r)
+
+
+def set_sorot(alat, nama):
+    if alat != null:
+        alat.setSorot(nama)
+
+
+def warnai(alat, w):
+    if alat != null:
+        for k in ["F", "B", "S", "E"]:
+            alat.setWarnaLapisan(k, w[k])
 
 
 def temuan_bertanda(b):
@@ -718,6 +876,8 @@ def pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan):
             setMode("jalur")
         elif k == "x":
             setMode("hapus")
+        elif k == "m":
+            setMode("ukur")
         elif k == "r" and st.terpilih != null:
             rujukan.current.pakai(part_putar(rujukan.current.b(), st.terpilih, 90), false)
         elif k == "delete" and st.terpilih != null:

@@ -359,3 +359,39 @@ button:focus-visible { outline: 2px solid var(--aksen); outline-offset: 2px; }
 .lap:nth-child(1).aktif { border-color: #e8b55c88; color: #e8b55c; }
 .lap:nth-child(2).aktif { border-color: #5b8dee88; color: #8fb2ff; }
 .lap:nth-child(3).aktif { border-color: #aab4c888; color: #cbd5e1; }
+
+/* ---------- panel tampilan (mengikuti Appearance di KiCad) ---------- */
+
+.daftar-lapisan { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.baris-lapis {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 7px; border: 1px solid transparent;
+}
+.baris-lapis.aktif { background: #1f2735; border-color: #3c4a63; }
+.mata {
+  width: 26px; min-width: 26px; min-height: 26px; height: 26px; padding: 0;
+  border-radius: 6px; border: 1px solid transparent; background: transparent;
+  color: #4b5565; font-size: 13px; line-height: 1;
+}
+.mata.nyala { color: var(--fg); background: #2a3346; }
+.contoh-warna {
+  width: 14px; height: 14px; min-width: 14px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.18);
+}
+.nama-lapis {
+  flex: 1; width: auto; min-height: 26px; padding: 0; justify-content: flex-start;
+  border: none; background: transparent; color: var(--fg); font-size: 13px;
+}
+.nama-lapis:hover { color: #fff; }
+.tanda-aktif {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--aksen);
+}
+
+input.warna {
+  width: 42px; min-width: 42px; height: 34px; padding: 2px;
+  border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg);
+  cursor: pointer;
+}
+
+.daftar-objek { display: flex; flex-direction: column; }

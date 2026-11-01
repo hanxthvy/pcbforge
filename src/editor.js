@@ -22,6 +22,15 @@
 import { semua_pad } from './core/board.hys'
 import { lib_get } from './core/lib.hys'
 
+// Warna lapisan, dan bisa diubah pengguna. Nilai bawaannya sengaja sama dengan
+// kebiasaan alat PCB: tembaga atas merah/oranye, bawah biru, sablon putih, tepi kuning.
+const WARNA_LAPISAN = {
+    F: '#e8b55c',
+    B: '#5b8dee',
+    S: '#e2e8f0',
+    E: '#e8d96a',
+}
+
 const W = {
     bg: '#090b0f',
     board: '#0d3b2a',
@@ -35,6 +44,10 @@ const W = {
     kisi: 'rgba(148,163,184,0.08)',
     jalurBaru: 'rgba(124,156,255,0.9)',
     pilih: '#7c9cff',
+}
+
+function bolat(v) {
+    return Math.round((v || 0) * 100) / 100
 }
 
 export function papan_alat(kanvas, opsi) {
@@ -78,6 +91,10 @@ export function papan_alat(kanvas, opsi) {
         kisi: 0.5,
         snap: true,
         tanda: [],
+        rats: [],
+        sorot: '',
+        ukur: null,
+        modeUkur: null,
         rasio: 1,
         lebarCss: 800,
         tinggiCss: opsi.tinggiCss || 540,
@@ -205,6 +222,26 @@ export function papan_alat(kanvas, opsi) {
         ctx.fill()
         ctx.stroke()
 
+        // Garis bantu ratsnest: sambungan yang BELUM dibuat.
+        //
+        // Digambar tipis dan putus-putus, dan selalu DI BAWAH jalur sungguhan. Ini
+        // yang membuat alat PCB bisa dipakai merutekan: orang tahu apa yang masih harus
+        // disambung tanpa membuka daftar net.
+        for (const r of a.rats) {
+            const p1 = a.keLayar(r.x1, r.y1)
+            const p2 = a.keLayar(r.x2, r.y2)
+            const tersorot = a.sorot === '' || a.sorot === r.net
+            if (!tersorot) continue
+            ctx.strokeStyle = a.sorot === r.net ? '#ffd479' : 'rgba(226,232,240,0.42)'
+            ctx.lineWidth = 1
+            ctx.setLineDash([4, 4])
+            ctx.beginPath()
+            ctx.moveTo(p1.x, p1.y)
+            ctx.lineTo(p2.x, p2.y)
+            ctx.stroke()
+            ctx.setLineDash([])
+        }
+
         // jalur, lapisan bawah dulu
         for (const lap of ['B', 'F']) {
             if (lap === 'B' && a.tampilBawah === false) continue
@@ -212,7 +249,11 @@ export function papan_alat(kanvas, opsi) {
             for (const n of b.nets) {
                 for (const t of n.trace) {
                     if (t.layer !== lap) continue
-                    ctx.strokeStyle = lap === 'F' ? W.atas : W.bawah
+                    const nyala = a.sorot === '' || a.sorot === n.nama
+                    ctx.strokeStyle = lap === 'F' ? WARNA_LAPISAN.F : WARNA_LAPISAN.B
+                    if (!nyala) {
+                        ctx.strokeStyle = 'rgba(148,163,184,0.18)'
+                    }
                     ctx.lineWidth = Math.max(1, t.lebar * a.skala)
                     ctx.lineCap = 'round'
                     ctx.lineJoin = 'round'
@@ -339,6 +380,31 @@ export function papan_alat(kanvas, opsi) {
             }
         }
 
+        // alat ukur: garis antara dua titik dan jaraknya
+        if (a.ukur !== null) {
+            const p1 = a.keLayar(a.ukur.x1, a.ukur.y1)
+            const p2 = a.keLayar(a.ukur.x2, a.ukur.y2)
+            ctx.strokeStyle = '#7c9cff'
+            ctx.lineWidth = 1.5
+            ctx.setLineDash([5, 3])
+            ctx.beginPath()
+            ctx.moveTo(p1.x, p1.y)
+            ctx.lineTo(p2.x, p2.y)
+            ctx.stroke()
+            ctx.setLineDash([])
+            const dx = a.ukur.x2 - a.ukur.x1
+            const dy = a.ukur.y2 - a.ukur.y1
+            const d = Math.sqrt(dx * dx + dy * dy)
+            const tengah = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
+            const label = (Math.round(d * 100) / 100) + ' mm'
+            ctx.font = '12px ui-sans-serif, system-ui, sans-serif'
+            const w = ctx.measureText(label).width
+            ctx.fillStyle = 'rgba(12,14,19,0.9)'
+            ctx.fillRect(tengah.x - w / 2 - 5, tengah.y - 20, w + 10, 18)
+            ctx.fillStyle = '#cfe0ff'
+            ctx.fillText(label, tengah.x - w / 2, tengah.y - 7)
+        }
+
         // penunjuk kursor
         if (a.kursor !== null && a.mode === 'jalur') {
             const c = a.keLayar(a.kursor.x, a.kursor.y)
@@ -388,8 +454,35 @@ export function papan_alat(kanvas, opsi) {
             if (ref !== null) G.hapusRef(ref)
             return
         }
+        if (a.mode === 'ukur') {
+            const q = a.snapTitik(p)
+            if (a.ukur === null) {
+                // Titik pertama: mulai mengukur.
+                a.ukur = { x1: q.x, y1: q.y, x2: q.x, y2: q.y }
+                G.pesan('Titik pertama ' + bolat(q.x) + ', ' + bolat(q.y) + ' mm. Klik titik kedua.')
+            } else {
+                // Titik kedua: laporkan jaraknya, lalu selesai.
+                const dx = q.x - a.ukur.x1
+                const dy = q.y - a.ukur.y1
+                const d = bolat(Math.sqrt(dx * dx + dy * dy))
+                G.pesan('Jarak ' + d + ' mm (dx ' + bolat(dx) + ', dy ' + bolat(dy) + ')')
+                a.ukur = null
+            }
+            a.gambar()
+            return
+        }
         if (a.mode === 'jalur') {
             const q = a.snapTitik(p)
+            // Kalau titik yang diklik sama dengan titik terakhir, itu tanda selesai.
+            // Ini kebiasaan di alat PCB, dan lebih mudah diandalkan daripada klik
+            // ganda: di layar sentuh, satu ketukan sering tidak terkirim sebagai ganda.
+            if (a.jalur !== null) {
+                const t = a.jalur.pts[a.jalur.pts.length - 1]
+                if (Math.abs(t.x - q.x) < 0.001 && Math.abs(t.y - q.y) < 0.001) {
+                    a.selesaiJalur()
+                    return
+                }
+            }
             const pts = a.jalur !== null ? a.jalur.pts.slice() : []
             pts.push(q)
             a.jalur = { pts: pts, lebar: st.lebar, layer: st.layer, net: st.net }
@@ -429,6 +522,12 @@ export function papan_alat(kanvas, opsi) {
                 q.x = s.x + sedangPindah.dx
                 q.y = s.y + sedangPindah.dy
             }
+            a.gambar()
+            return
+        }
+        if (a.mode === 'ukur' && a.ukur !== null) {
+            a.ukur.x2 = s.x
+            a.ukur.y2 = s.y
             a.gambar()
             return
         }
@@ -474,6 +573,11 @@ export function papan_alat(kanvas, opsi) {
     })
 
     kanvas.addEventListener('dblclick', () => a.selesaiJalur())
+    // Tombol Escape membatalkan jalur yang sedang digambar; Enter menyelesaikannya.
+    a.batalkanJalur = () => {
+        a.jalur = null
+        a.gambar()
+    }
     kanvas.addEventListener('contextmenu', (ev) => {
         ev.preventDefault()
         a.selesaiJalur()
@@ -600,6 +704,26 @@ export function papan_alat(kanvas, opsi) {
 
     a.setTanda = (t) => {
         a.tanda = t || []
+        a.gambar()
+    }
+
+    a.setRats = (r) => {
+        a.rats = r || []
+        a.gambar()
+    }
+
+    a.setSorot = (nama) => {
+        a.sorot = nama || ''
+        a.gambar()
+    }
+
+    a.setUkur = (u) => {
+        a.ukur = u
+        a.gambar()
+    }
+
+    a.setWarnaLapisan = (lap, warna) => {
+        WARNA_LAPISAN[lap] = warna
         a.gambar()
     }
 
