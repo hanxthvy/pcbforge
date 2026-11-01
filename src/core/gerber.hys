@@ -22,6 +22,7 @@
 from "./units.hys" import mm_to_inch, fmt, fmt_mm, gabung_baris
 from "./text.hys" import goresan_teks, tinggi_untuk, lebar_teks
 from "./zone.hys" import zona_untuk, zona_lubang, zona_sambung
+from "./alat.hys" import teks_semua
 from "./geom.hys" import path_segments
 from "./board.hys" import semua_pad
 from "./lib.hys" import lib_get, lib_ada
@@ -426,6 +427,12 @@ export def lapisan_silk(b, sisi):
             gn = goresan_teks(str(p.nilai), p.x - tengah_teks(str(p.nilai), tn), p.y + lb.h / 2 + 0.25 + tn, tn, 0.15)
             for j in gn:
                 tulis_jalur(badan, apo, apo_list, j, 0.12)
+    # Tulisan sablon bebas (nama board, versi, peringatan).
+    for tx in teks_semua(b, sisi):
+        goresan2 = goresan_teks(tx.isi, tx.x, tx.y, tx.tinggi, 0.2)
+        for j in goresan2:
+            tulis_jalur(badan, apo, apo_list, j, 0.12)
+
     fungsi = "Legend,Top"
     if sisi == "B":
         fungsi = "Legend,Bot"

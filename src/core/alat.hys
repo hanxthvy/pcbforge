@@ -1,0 +1,403 @@
+# [xihanzu-NR]
+# Alat penyuntingan lanjutan: kunci, grup, ratak, bagi rata, dan teks sablon.
+#
+# Dipisah dari cmd.hys karena isinya berbeda sifat: cmd.hys mengurus satu perintah yang
+# mengubah satu hal, sedangkan di sini perintahnya bekerja atas BANYAK objek sekaligus
+# atau atas keadaan tampilan. Mencampur keduanya membuat cmd.hys sulit dibaca.
+#
+# Alasan tiap alat ada, disebut singkat, karena semuanya ada di alat PCB profesional:
+#
+#   kunci   mencegah komponen bergeser tanpa sengaja saat yang lain sedang dipindah
+#   grup    memindah atau memutar sekelompok komponen bersama-sama
+#   ratak   merapikan barisan komponen supaya tidak berantakan
+#   bagi    menyebar komponen dengan jarak sama
+#   teks    tulisan di sablon, di luar penanda komponen: nama board, versi, peringatan
+
+from "./board.hys" import board_salin, cari_part
+from "./text.hys" import lebar_teks, tinggi_untuk
+from "./units.hys" import clamp, bulat
+
+
+export def board_sah_2(b):
+    if b == null or b == undefined:
+        return false
+    if b.parts == undefined or b.nets == undefined or b.outline == undefined:
+        return false
+    return true
+
+
+# ---------- kunci ----------
+
+export def part_kunci(b, ref):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    p = cari_part(b, ref)
+    if p == null:
+        return { b: b, pesan: "penanda " + ref + " tidak ada" }
+    salinan = board_salin(b)
+    for q in salinan.parts:
+        if q.ref == ref:
+            q.kunci = true
+    return { b: salinan, pesan: "" }
+
+
+export def part_buka(b, ref):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    salinan = board_salin(b)
+    for q in salinan.parts:
+        if q.ref == ref:
+            q.kunci = false
+    return { b: salinan, pesan: "" }
+
+
+export def part_terkunci(b, ref):
+    if board_sah_2(b) == false:
+        return false
+    p = cari_part(b, ref)
+    if p == null:
+        return false
+    return p.kunci == true
+
+
+# ---------- grup ----------
+
+export def grup_buat(b, nama, anggota):
+    # Anggota: daftar penanda. Satu komponen hanya boleh ada di satu grup; memasukkannya
+    # ke grup baru melepasnya dari grup lama, kalau tidak anggotanya jadi tumpang tindih
+    # dan perintah grup jadi tidak bisa ditebak hasilnya.
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if nama == "":
+        return { b: b, pesan: "nama grup tidak boleh kosong" }
+    if anggota.length < 1:
+        return { b: b, pesan: "grup butuh minimal satu komponen" }
+    for r in anggota:
+        if cari_part(b, r) == null:
+            return { b: b, pesan: "penanda " + r + " tidak ada" }
+    salinan = board_salin(b)
+    for q in salinan.parts:
+        q.grup = null
+    for q in salinan.parts:
+        for r in anggota:
+            if q.ref == r:
+                q.grup = nama
+    return { b: salinan, pesan: "" }
+
+
+export def grup_lepas(b, nama):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    salinan = board_salin(b)
+    ada = false
+    for q in salinan.parts:
+        if q.grup == nama:
+            q.grup = null
+            ada = true
+    if ada == false:
+        return { b: b, pesan: "grup " + nama + " tidak ada" }
+    return { b: salinan, pesan: "" }
+
+
+export def grup_anggota(b, nama):
+    out = []
+    if board_sah_2(b) == false:
+        return out
+    for q in b.parts:
+        if q.grup == nama:
+            out.push(q.ref)
+    return out
+
+
+export def grup_geser(b, nama, dx, dy):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    anggota = grup_anggota(b, nama)
+    if anggota.length == 0:
+        return { b: b, pesan: "grup " + nama + " tidak ada" }
+    salinan = board_salin(b)
+    for q in salinan.parts:
+        if q.grup == nama:
+            nx = q.x + dx
+            ny = q.y + dy
+            if nx < 0 or ny < 0 or nx > salinan.outline.lebar or ny > salinan.outline.tinggi:
+                return { b: b, pesan: "grup akan keluar area board" }
+            q.x = nx
+            q.y = ny
+    return { b: salinan, pesan: "" }
+
+
+export def grup_putar(b, nama, derajat):
+    # Memutar grup mengelilingi titik pusat anggotanya. Kalau tiap komponen diputar di
+    # tempatnya sendiri, susunan grupnya berubah dan itu bukan yang dimaksud pengguna.
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    anggota = grup_anggota(b, nama)
+    if anggota.length == 0:
+        return { b: b, pesan: "grup " + nama + " tidak ada" }
+    cx = 0
+    cy = 0
+    for q in b.parts:
+        if q.grup == nama:
+            cx += q.x
+            cy += q.y
+    cx = cx / anggota.length
+    cy = cy / anggota.length
+    rad = derajat * Math.PI / 180
+    cs = Math.cos(rad)
+    sn = Math.sin(rad)
+    salinan = board_salin(b)
+    for q in salinan.parts:
+        if q.grup != nama:
+            continue
+        dx = q.x - cx
+        dy = q.y - cy
+        q.x = cx + dx * cs - dy * sn
+        q.y = cy + dx * sn + dy * cs
+        q.rot = ((q.rot + derajat) % 360 + 360) % 360
+        if q.x < 0 or q.y < 0 or q.x > salinan.outline.lebar or q.y > salinan.outline.tinggi:
+            return { b: b, pesan: "grup akan keluar area board" }
+    return { b: salinan, pesan: "" }
+
+
+# ---------- ratak dan bagi rata ----------
+
+export def ratak(b, anggota, cara):
+    # cara: "kiri", "kanan", "atas", "bawah", "tengah-x", "tengah-y"
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if anggota.length < 2:
+        return { b: b, pesan: "ratak butuh minimal dua komponen" }
+    for r in anggota:
+        if cari_part(b, r) == null:
+            return { b: b, pesan: "penanda " + r + " tidak ada" }
+    salinan = board_salin(b)
+    tepi = pertama(salinan, anggota, cara)
+    for q in salinan.parts:
+        for r in anggota:
+            if q.ref != r:
+                continue
+            pindah(q, cara, tepi)
+    return { b: salinan, pesan: "" }
+
+
+export def kunci_ratak(cara):
+    if cara == "kiri":
+        return "x", "min"
+    if cara == "kanan":
+        return "x", "max"
+    if cara == "atas":
+        return "y", "min"
+    if cara == "bawah":
+        return "y", "max"
+    if cara == "tengah-x":
+        return "y", "tengah"
+    return "x", "tengah"
+
+
+export def pertama(b, anggota, cara):
+    s = kunci_ratak(cara)
+    sumbu = s[0]
+    nilai = 0
+    mulai = false
+    for q in b.parts:
+        for r in anggota:
+            if q.ref != r:
+                continue
+            v = q.y
+            if sumbu == "x":
+                v = q.x
+            if mulai == false:
+                nilai = v
+                mulai = true
+            elif s[1] == "min" and v < nilai:
+                nilai = v
+            elif s[1] == "max" and v > nilai:
+                nilai = v
+    return nilai
+
+
+export def pindah(q, cara, tepi):
+    if cara == "kiri":
+        q.x = tepi
+    elif cara == "kanan":
+        q.x = tepi
+    elif cara == "atas":
+        q.y = tepi
+    elif cara == "bawah":
+        q.y = tepi
+    elif cara == "tengah-x":
+        # semua disamakan pada sumbu Y ke titik tengah
+        q.y = tepi
+    else:
+        q.x = tepi
+
+
+export def bagi_rata(b, anggota, cara):
+    # Menyebar dengan jarak sama antara nilai terkecil dan terbesar, pada satu sumbu.
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if anggota.length < 3:
+        return { b: b, pesan: "bagi rata butuh minimal tiga komponen" }
+    for r in anggota:
+        if cari_part(b, r) == null:
+            return { b: b, pesan: "penanda " + r + " tidak ada" }
+
+    sumbu = "x"
+    if cara == "tegak":
+        sumbu = "y"
+
+    # urutkan anggota menurut sumbu
+    urut = []
+    for r in anggota:
+        urut.push(r)
+    i = 0
+    while i < urut.length:
+        j = i + 1
+        while j < urut.length:
+            a = cari_part(b, urut[i])
+            c = cari_part(b, urut[j])
+            va = a.x
+            vc = c.x
+            if sumbu == "y":
+                va = a.y
+                vc = c.y
+            if vc < va:
+                t = urut[i]
+                urut[i] = urut[j]
+                urut[j] = t
+            j += 1
+        i += 1
+
+    a0 = cari_part(b, urut[0])
+    a1 = cari_part(b, urut[urut.length - 1])
+    awal = a0.x
+    akhir = a1.x
+    if sumbu == "y":
+        awal = a0.y
+        akhir = a1.y
+    langkah = (akhir - awal) / (urut.length - 1)
+
+    salinan = board_salin(b)
+    k = 0
+    while k < urut.length:
+        for q in salinan.parts:
+            if q.ref != urut[k]:
+                continue
+            if sumbu == "y":
+                q.y = awal + k * langkah
+            else:
+                q.x = awal + k * langkah
+        k += 1
+    return { b: salinan, pesan: "" }
+
+
+# ---------- teks sablon ----------
+
+export def teks_tambah(b, isi, x, y, tinggi, layer):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if isi == "":
+        return { b: b, pesan: "teks tidak boleh kosong" }
+    if isi.length > 40:
+        return { b: b, pesan: "teks di atas 40 huruf terlalu panjang untuk sablon" }
+    if tinggi < 0.6 or tinggi > 5:
+        return { b: b, pesan: "tinggi teks harus antara 0.6 dan 5 mm" }
+    if x < 0 or y < 0 or x > b.outline.lebar or y > b.outline.tinggi:
+        return { b: b, pesan: "teks di luar area board" }
+    if layer != "F" and layer != "B":
+        return { b: b, pesan: "lapisan teks harus F atau B" }
+    salinan = board_salin(b)
+    if salinan.teks == undefined:
+        salinan.teks = []
+    salinan.teks.push({ isi: isi, x: x, y: y, tinggi: tinggi, layer: layer })
+    return { b: salinan, pesan: "" }
+
+
+export def teks_hapus(b, indeks):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if b.teks == undefined or indeks < 0 or indeks >= b.teks.length:
+        return { b: b, pesan: "teks nomor " + str(indeks) + " tidak ada" }
+    salinan = board_salin(b)
+    sisa = []
+    i = 0
+    while i < salinan.teks.length:
+        if i != indeks:
+            sisa.push(salinan.teks[i])
+        i += 1
+    salinan.teks = sisa
+    return { b: salinan, pesan: "" }
+
+
+export def teks_semua(b, layer):
+    out = []
+    if board_sah_2(b) == false or b.teks == undefined:
+        return out
+    for t in b.teks:
+        if t.layer == layer:
+            out.push(t)
+    return out
+
+
+export def teks_lebar(t):
+    return lebar_teks(t.isi, t.tinggi, 0.2)
+
+
+# ---------- keepout (rule area) ----------
+
+export def keepout_tambah(b, x1, y1, x2, y2, layer, keterangan):
+    # Area yang tidak boleh ditempati tembaga. Dipakai untuk lubang sekrup, antena,
+    # dan bagian yang harus bebas dari pengaruh listrik.
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if x2 - x1 <= 1 or y2 - y1 <= 1:
+        return { b: b, pesan: "keepout harus lebih besar dari 1 x 1 mm" }
+    if x1 < 0 or y1 < 0 or x2 > b.outline.lebar or y2 > b.outline.tinggi:
+        return { b: b, pesan: "keepout di luar area board" }
+    salinan = board_salin(b)
+    if salinan.keepout == undefined:
+        salinan.keepout = []
+    salinan.keepout.push({
+        x1: x1, y1: y1, x2: x2, y2: y2,
+        layer: layer, keterangan: keterangan,
+    })
+    return { b: salinan, pesan: "" }
+
+
+export def keepout_hapus(b, indeks):
+    if board_sah_2(b) == false:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if b.keepout == undefined or indeks < 0 or indeks >= b.keepout.length:
+        return { b: b, pesan: "keepout nomor " + str(indeks) + " tidak ada" }
+    salinan = board_salin(b)
+    sisa = []
+    i = 0
+    while i < salinan.keepout.length:
+        if i != indeks:
+            sisa.push(salinan.keepout[i])
+        i += 1
+    salinan.keepout = sisa
+    return { b: salinan, pesan: "" }
+
+
+export def titik_di_keepout(b, x, y, layer):
+    # Dipakai pemeriksa aturan: tembaga di dalam keepout itu pelanggaran.
+    if b.keepout == undefined:
+        return null
+    for k in b.keepout:
+        if k.layer != layer and k.layer != "K":
+            continue
+        if x >= k.x1 and x <= k.x2 and y >= k.y1 and y <= k.y2:
+            return k
+    return null
+
+
+export def keepout_untuk(b, layer):
+    out = []
+    if b.keepout == undefined:
+        return out
+    for k in b.keepout:
+        if k.layer == layer:
+            out.push(k)
+    return out

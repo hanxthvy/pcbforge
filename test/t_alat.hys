@@ -1,0 +1,137 @@
+# [xihanzu-NR]
+# Uji alat lanjutan: kunci, grup, ratak, bagi rata, teks sablon, keepout.
+
+from "./contoh.mjs" import board_contoh_siap
+from "./alat.mjs" import part_kunci, part_buka, part_terkunci
+from "./alat.mjs" import grup_buat, grup_lepas, grup_anggota, grup_geser, grup_putar
+from "./alat.mjs" import ratak, bagi_rata
+from "./alat.mjs" import teks_tambah, teks_hapus, teks_semua
+from "./alat.mjs" import keepout_tambah, keepout_hapus, titik_di_keepout
+from "./gerber.mjs" import lapisan_silk
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def pos(b, ref):
+    for p in b.parts:
+        if p.ref == ref:
+            return { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100, rot: p.rot }
+    return null
+
+
+def utama():
+    b = board_contoh_siap()
+
+    # ---- kunci ----
+    h = part_kunci(b, "R1")
+    cek("kunci berhasil", h.pesan == "" and part_terkunci(h.b, "R1") == true, h.pesan)
+    cek("yang lain tidak ikut terkunci", part_terkunci(h.b, "D1") == false, "")
+    h = part_buka(h.b, "R1")
+    cek("buka kunci berhasil", part_terkunci(h.b, "R1") == false, "")
+    h = part_kunci(b, "TIDAK_ADA")
+    cek("kunci penanda yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- grup ----
+    h = grup_buat(b, "g1", ["R1", "D1"])
+    cek("grup dibuat", h.pesan == "" and grup_anggota(h.b, "g1").length == 2,
+        str(grup_anggota(h.b, "g1").length) + " anggota")
+    h2 = grup_buat(h.b, "g2", ["R2"])
+    cek("komponen pindah grup, tidak dobel", grup_anggota(h2.b, "g1").length == 0,
+        str(grup_anggota(h2.b, "g1").length))
+    h = grup_buat(b, "g1", ["TIDAK_ADA"])
+    cek("grup dengan penanda tidak ada ditolak", h.pesan != "", h.pesan)
+    h = grup_buat(b, "g1", [])
+    cek("grup kosong ditolak", h.pesan != "", h.pesan)
+
+    h = grup_buat(b, "g1", ["R1", "D1"])
+    r1 = pos(h.b, "R1")
+    d1 = pos(h.b, "D1")
+    h = grup_geser(h.b, "g1", 2, 1)
+    cek("geser grup berhasil", h.pesan == "", h.pesan)
+    cek("R1 ikut bergeser",
+        Math.abs(pos(h.b, "R1").x - (r1.x + 2)) < 0.01 and Math.abs(pos(h.b, "R1").y - (r1.y + 1)) < 0.01,
+        JSON.stringify(pos(h.b, "R1")))
+    cek("D1 ikut bergeser", Math.abs(pos(h.b, "D1").x - (d1.x + 2)) < 0.01, "")
+
+    h = grup_buat(b, "g1", ["R1", "D1"])
+    h = grup_geser(h.b, "g1", 200, 0)
+    cek("geser grup keluar board ditolak", h.pesan != "", h.pesan)
+
+    h = grup_buat(b, "g1", ["R1", "D1"])
+    h = grup_lepas(h.b, "g1")
+    cek("lepas grup berhasil", grup_anggota(h.b, "g1").length == 0, "")
+    h = grup_lepas(b, "tidak_ada")
+    cek("lepas grup yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- ratak ----
+    h = ratak(b, ["R1", "D1"], "kiri")
+    cek("ratak kiri berhasil", h.pesan == "", h.pesan)
+    cek("kedua X jadi sama", Math.abs(pos(h.b, "R1").x - pos(h.b, "D1").x) < 0.001,
+        str(pos(h.b, "R1").x) + " vs " + str(pos(h.b, "D1").x))
+    h = ratak(b, ["R1"], "kiri")
+    cek("ratak satu komponen ditolak", h.pesan != "", h.pesan)
+    h = ratak(b, ["R1", "TIDAK_ADA"], "kiri")
+    cek("ratak penanda tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- bagi rata ----
+    h = bagi_rata(b, ["J1", "R1", "R2", "J2"], "datar")
+    cek("bagi rata berhasil", h.pesan == "", h.pesan)
+    j = pos(h.b, "J1")
+    r = pos(h.b, "R1")
+    r2 = pos(h.b, "R2")
+    cek("jarak pertama = jarak kedua",
+        Math.abs((r.x - j.x) - (r2.x - r.x)) < 0.01,
+        str(Math.round((r.x - j.x) * 100) / 100) + " vs " + str(Math.round((r2.x - r.x) * 100) / 100))
+    h = bagi_rata(b, ["R1", "D1"], "datar")
+    cek("bagi rata dua komponen ditolak", h.pesan != "", h.pesan)
+
+    # ---- teks sablon ----
+    h = teks_tambah(b, "BOARD UJI v1", 5, 22, 1.2, "F")
+    cek("teks ditambahkan", h.pesan == "" and teks_semua(h.b, "F").length == 1, h.pesan)
+    cek("teks ikut ke berkas sablon",
+        lapisan_silk(h.b, "F").indexOf("D01*") > 0, "")
+    h = teks_tambah(b, "", 5, 5, 1, "F")
+    cek("teks kosong ditolak", h.pesan != "", h.pesan)
+    h = teks_tambah(b, "x", 5, 5, 0.2, "F")
+    cek("teks terlalu kecil ditolak", h.pesan != "", h.pesan)
+    h = teks_tambah(b, "x", 500, 5, 1, "F")
+    cek("teks di luar board ditolak", h.pesan != "", h.pesan)
+    h = teks_hapus(h.b, 0)
+    cek("hapus teks berhasil", h.b.teks.length == 0, str(h.b.teks.length))
+    h = teks_hapus(b, 5)
+    cek("hapus teks yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    # ---- keepout ----
+    h = keepout_tambah(b, 1, 1, 6, 6, "K", "lubang sekrup")
+    cek("keepout ditambahkan", h.pesan == "" and h.b.keepout.length == 1, h.pesan)
+    cek("titik di dalam keepout terdeteksi",
+        titik_di_keepout(h.b, 3, 3, "F") != null, "")
+    cek("titik di luar keepout tidak terdeteksi",
+        titik_di_keepout(h.b, 20, 20, "F") == null, "")
+    h = keepout_tambah(b, 1, 1, 2, 2, "K", "")
+    cek("keepout terlalu kecil ditolak", h.pesan != "", h.pesan)
+    h = keepout_tambah(b, 1, 1, 2.5, 2.5, "K", "")
+    cek("keepout 1.5 mm diterima", h.pesan == "", h.pesan)
+    h = keepout_tambah(b, -5, 1, 6, 6, "K", "")
+    cek("keepout di luar board ditolak", h.pesan != "", h.pesan)
+    hk = keepout_tambah(b, 1, 1, 6, 6, "K", "")
+    h = keepout_hapus(hk.b, 0)
+    cek("hapus keepout berhasil", h.b.keepout.length == 0, str(h.b.keepout.length))
+    h = keepout_hapus(b, 9)
+    cek("hapus keepout yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    return 0
+
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1
