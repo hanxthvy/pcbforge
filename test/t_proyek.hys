@@ -1,0 +1,104 @@
+# [xihanzu-NR]
+# Uji simpan dan buka proyek.
+#
+# Berkas proyek adalah janji ke pengguna: kalau bentuknya berubah diam-diam, pekerjaan
+# orang hilang. Uji ini memeriksa bahwa apa yang disimpan bisa dibuka kembali PERSIS
+# sama, dan bahwa berkas yang rusak ditolak dengan pesan yang jelas, bukan dimuat
+# setengah lalu membuat program berhenti.
+
+import "fs" as fs
+
+from "./contoh.mjs" import board_contoh_siap
+from "./proyek.mjs" import ke_teks, dari_teks, periksa_bentuk, lengkapi, nama_berkas, ringkas_proyek
+from "./zone.mjs" import zona_tambah
+from "./alat.mjs" import teks_tambah
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def utama():
+    b = board_contoh_siap()
+
+    # bulat penuh: jalur, zona, teks, semua ikut
+    b = zona_tambah(b, "GND", "B", 0.5, 0.5, 39.5, 24.5, 0.3).b
+    b = teks_tambah(b, "BOARD UJI", 3, 22, 1.2, "F").b
+
+    t = ke_teks(b)
+    cek("teks proyek terbentuk", t.length > 100, str(t.length) + " huruf")
+
+    h = dari_teks(t)
+    cek("proyek bisa dibuka kembali", h.pesan == "" and h.b != null, h.pesan)
+    cek("jumlah komponen sama", h.b.parts.length == b.parts.length,
+        str(h.b.parts.length) + " vs " + str(b.parts.length))
+    cek("jumlah net sama", h.b.nets.length == b.nets.length, "")
+    cek("zona ikut tersimpan", h.b.zones.length == 1, str(h.b.zones.length))
+    cek("teks ikut tersimpan", h.b.teks.length == 1, str(h.b.teks.length))
+    # posisi harus sama persis
+    sama = true
+    i = 0
+    while i < b.parts.length:
+        if b.parts[i].ref != h.b.parts[i].ref:
+            sama = false
+        if Math.abs(b.parts[i].x - h.b.parts[i].x) > 0.0001:
+            sama = false
+        if Math.abs(b.parts[i].y - h.b.parts[i].y) > 0.0001:
+            sama = false
+        i += 1
+    cek("posisi komponen sama persis", sama, "")
+
+    # penolakan berkas yang tidak sah
+    h = dari_teks("")
+    cek("teks kosong ditolak", h.pesan != "" and h.b == null, h.pesan)
+    h = dari_teks("bukan json")
+    cek("bukan JSON ditolak", h.pesan != "", h.pesan)
+    h = dari_teks('{"bentuk":"lain"}')
+    cek("bukan berkas PCBForge ditolak", h.pesan != "", h.pesan)
+    h = dari_teks('{"bentuk":"pcbforge"}')
+    cek("tanpa versi ditolak", h.pesan != "", h.pesan)
+    h = dari_teks('{"bentuk":"pcbforge","versi":99}')
+    cek("versi lebih baru ditolak", h.pesan != "" and h.pesan.indexOf("lebih baru") > 0, h.pesan)
+    h = dari_teks('{"bentuk":"pcbforge","versi":1}')
+    cek("tanpa board ditolak", h.pesan != "", h.pesan)
+    h = dari_teks('{"bentuk":"pcbforge","versi":1,"board":{"outline":{},"parts":[],"nets":[]}}')
+    cek("board tanpa ukuran ditolak", h.pesan != "", h.pesan)
+    h = dari_teks('{"bentuk":"pcbforge","versi":1,"board":{"outline":{"lebar":40,"tinggi":25},"parts":[{"ref":"R1"}],"nets":[]}}')
+    cek("komponen tanpa lib ditolak", h.pesan != "", h.pesan)
+
+    # berkas versi lama: bagian baru diisi kosong, bukan undefined
+    lama = '{"bentuk":"pcbforge","versi":1,"board":{"outline":{"lebar":40,"tinggi":25},"parts":[{"ref":"R1","lib":"R_0805","x":5,"y":5}],"nets":[{"nama":"VCC"}]}}'
+    h = dari_teks(lama)
+    cek("berkas versi lama bisa dibuka", h.pesan == "", h.pesan)
+    cek("zona diisi kosong", h.b.zones.length == 0, "")
+    cek("teks diisi kosong", h.b.teks.length == 0, "")
+    cek("aturan diisi bawaan", h.b.aturan.lebar_trace_min == 0.15, str(h.b.aturan.lebar_trace_min))
+    cek("pin net diisi kosong", h.b.nets[0].pin.length == 0, "")
+    cek("rot komponen diisi nol", h.b.parts[0].rot == 0, str(h.b.parts[0].rot))
+
+    # nama berkas dibersihkan
+    b2 = board_contoh_siap()
+    b2.meta.nama = 'uji/2:v1*'
+    cek("nama berkas dibersihkan", nama_berkas(b2).indexOf("/") < 0, nama_berkas(b2))
+    cek("nama berkas berakhiran benar", nama_berkas(b2).indexOf(".pcbforge.json") > 0, nama_berkas(b2))
+
+    # tulis ke disk supaya bisa diperiksa alat lain
+    fs.writeFileSync("/tmp/uji-proyek.pcbforge.json", t)
+    cek("berkas proyek tertulis", fs.existsSync("/tmp/uji-proyek.pcbforge.json"), "")
+
+    r = ringkas_proyek(b)
+    cek("ringkasan punya jumlah jalur", r.jalur > 0, str(r.jalur) + " jalur")
+
+    return 0
+
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1

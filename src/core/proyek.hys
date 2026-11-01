@@ -1,0 +1,196 @@
+# [xihanzu-NR]
+# Menyimpan dan membuka pekerjaan.
+#
+# Kenapa modul sendiri: berkas proyek adalah janji ke pengguna. Kalau bentuknya berubah
+# diam-diam, pekerjaan orang hilang. Jadi bentuknya ditulis di satu tempat, dengan
+# versi, dan ada pemeriksaan saat dibuka.
+#
+# Cara simpan:
+#   - localStorage  supaya pekerjaan tidak hilang saat halaman ditutup. Ini yang paling
+#                   penting: alat yang kehilangan pekerjaan tidak akan dipakai dua kali.
+#   - berkas .json  untuk arsip dan untuk dipindah ke mesin lain.
+#
+# Yang TIDAK dilakukan: menyimpan otomatis tiap perubahan. Itu membuat tombol undo
+# tidak berguna (karena setiap langkah ikut tersimpan) dan menulis ke penyimpanan
+# browser puluhan kali per detik saat kanvas diseret. Penyimpanan dilakukan saat
+# pengguna memintanya, ditambah satu kali saat halaman akan ditutup.
+
+from "./board.hys" import board_baru
+
+
+VERSI_PROYEK = 1
+KUNCI_SIMPAN = "pcbforge.board"
+
+
+export def ke_teks(b):
+    # Board jadi teks, dengan versi dan penanda bentuk.
+    amplop = {
+        bentuk: "pcbforge",
+        versi: VERSI_PROYEK,
+        board: b,
+    }
+    return JSON.stringify(amplop)
+
+
+export def dari_teks(teks):
+    # Mengembalikan { b, pesan }. Kalau gagal, `b` null dan pesannya menjelaskan.
+    if teks == null or teks == "":
+        return { b: null, pesan: "berkas kosong" }
+    coba = null
+    try:
+        coba = JSON.parse(teks)
+    except:
+        # Tanpa nama variabel: `except err:` menghasilkan impor helper dari runtime
+        # hydra, dan mesin inti dijaga bebas helper supaya bisa diuji di Node polos.
+        # Gerbang di tools/core.sh yang menangkapnya.
+        return { b: null, pesan: "berkas ini bukan JSON yang sah" }
+    if coba == null:
+        return { b: null, pesan: "berkas kosong" }
+    if coba.bentuk != "pcbforge":
+        return { b: null, pesan: "berkas ini bukan berkas PCBForge" }
+    if coba.versi == undefined:
+        return { b: null, pesan: "berkas tidak memuat versi" }
+    if coba.versi > VERSI_PROYEK:
+        return { b: null, pesan: "berkas dibuat versi yang lebih baru (" + str(coba.versi) + ")" }
+    hasil = periksa_bentuk(coba.board)
+    if hasil != "":
+        return { b: null, pesan: hasil }
+    return { b: lengkapi(coba.board), pesan: "" }
+
+
+export def periksa_bentuk(b):
+    if b == null or b == undefined:
+        return "berkas tidak memuat board"
+    if b.outline == undefined or b.outline.lebar == undefined:
+        return "board tidak punya ukuran"
+    if b.parts == undefined:
+        return "board tidak punya daftar komponen"
+    if b.nets == undefined:
+        return "board tidak punya daftar net"
+    if Array.isArray(b.parts) == false:
+        return "daftar komponen bukan daftar"
+    i = 0
+    while i < b.parts.length:
+        p = b.parts[i]
+        if p.ref == undefined or p.lib == undefined:
+            return "komponen nomor " + str(i) + " tidak lengkap"
+        if p.x == undefined or p.y == undefined:
+            return "komponen " + str(p.ref) + " tidak punya posisi"
+        i += 1
+    i = 0
+    while i < b.nets.length:
+        n = b.nets[i]
+        if n.nama == undefined:
+            return "net nomor " + str(i) + " tidak punya nama"
+        if n.pin == undefined:
+            n.pin = []
+        if n.trace == undefined:
+            n.trace = []
+        if n.via == undefined:
+            n.via = []
+        i += 1
+    return ""
+
+
+export def lengkapi(b):
+    # Berkas dari versi lama mungkin belum punya bagian yang ditambahkan kemudian.
+    # Diisi dengan nilai kosong, bukan dibiarkan undefined, supaya seluruh program tidak
+    # perlu memeriksa keberadaannya di setiap tempat.
+    if b.zones == undefined:
+        b.zones = []
+    if b.teks == undefined:
+        b.teks = []
+    if b.keepout == undefined:
+        b.keepout = []
+    if b.rules == undefined:
+        b.rules = {}
+    if b.aturan == undefined:
+        b.aturan = {
+            lebar_trace_min: 0.15,
+            clearance_min: 0.2,
+            tepi_board_min: 0.3,
+            annular_min: 0.13,
+            bor_min: 0.3,
+            lebar_trace_default: 0.25,
+        }
+    if b.meta == undefined:
+        b.meta = { nama: "board", dibuat: "" }
+    i = 0
+    while i < b.parts.length:
+        if b.parts[i].side == undefined:
+            b.parts[i].side = "F"
+        if b.parts[i].rot == undefined:
+            b.parts[i].rot = 0
+        if b.parts[i].nilai == undefined:
+            b.parts[i].nilai = ""
+        i += 1
+    return b
+
+
+export def simpan_lokal(b):
+    # Menyimpan ke penyimpanan browser. Mengembalikan pesan galat, atau "" kalau berhasil.
+    if typeof(localStorage) == "undefined":
+        return "penyimpanan browser tidak tersedia"
+    try:
+        localStorage.setItem(KUNCI_SIMPAN, ke_teks(b))
+    except:
+        return "gagal menyimpan: penyimpanan penuh atau diblokir"
+    return ""
+
+
+export def muat_lokal():
+    if typeof(localStorage) == "undefined":
+        return { b: null, pesan: "penyimpanan browser tidak tersedia" }
+    teks = localStorage.getItem(KUNCI_SIMPAN)
+    if teks == null:
+        return { b: null, pesan: "belum ada pekerjaan tersimpan" }
+    return dari_teks(teks)
+
+
+export def hapus_lokal():
+    if typeof(localStorage) != "undefined":
+        localStorage.removeItem(KUNCI_SIMPAN)
+    return ""
+
+
+export def ada_lokal():
+    if typeof(localStorage) == "undefined":
+        return false
+    return localStorage.getItem(KUNCI_SIMPAN) != null
+
+
+export def nama_berkas(b):
+    # Nama berkas dari nama board, dibersihkan dari huruf yang tidak boleh ada di nama
+    # berkas. Penting: tanpa ini, board bernama "uji/2" membuat berkasnya gagal disimpan
+    # tanpa penjelasan.
+    bersih = ""
+    i = 0
+    while i < b.meta.nama.length:
+        c = b.meta.nama[i]
+        if c == "/" or c == "\\" or c == ":" or c == "*" or c == "?" or c == '"' or c == "<" or c == ">" or c == "|":
+            bersih = bersih + "-"
+        else:
+            bersih = bersih + c
+        i += 1
+    if bersih == "":
+        bersih = "board"
+    return bersih + ".pcbforge.json"
+
+
+export def ringkas_proyek(b):
+    # Ringkasan untuk ditampilkan di kepala halaman.
+    return {
+        nama: b.meta.nama,
+        komponen: b.parts.length,
+        net: b.nets.length,
+        jalur: jumlah_trace(b),
+        zona: b.zones.length,
+        teks: b.teks.length,
+    }
+
+
+export def jumlah_trace(b):
+    n = 0
+    for x in b.nets:
+        n += x.trace.length
+    return n

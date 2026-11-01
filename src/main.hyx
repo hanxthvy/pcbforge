@@ -32,6 +32,7 @@ from "./core/zip.hys" import zip_buat
 from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran
 from "./core/zone.hys" import zona_tambah, zona_hapus
 from "./core/alat.hys" import part_kunci, part_buka, grup_buat, grup_lepas, grup_anggota, ratak, bagi_rata, teks_tambah, keepout_tambah
+from "./core/proyek.hys" import ke_teks, dari_teks, simpan_lokal, muat_lokal, ada_lokal, nama_berkas
 
 
 def bulat2(v):
@@ -186,6 +187,72 @@ def h_zona_hapus(b, setB, setPesan, net, layer):
     h = zona_hapus(b, net, layer)
     if h_pesan(h, setPesan):
         setB(h.b)
+
+
+def h_simpan_lokal(b, setPesan):
+    g = simpan_lokal(b)
+    if g != "":
+        setPesan(g)
+        return
+    setPesan("Tersimpan di penyimpanan browser. Pekerjaan ini akan kembali saat halaman dibuka lagi.")
+
+
+def h_unduh_proyek(b, setPesan):
+    teks = ke_teks(b)
+    blob = new Blob([teks])
+    url = URL.createObjectURL(blob)
+    a = document.createElement("a")
+    a.href = url
+    a.download = nama_berkas(b)
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    setPesan("Berkas proyek diunduh: " + nama_berkas(b))
+
+
+def muat_awal(setB, setPesan):
+    if ada_lokal() == false:
+        return
+    h = muat_lokal()
+    if h.pesan != "":
+        setPesan("Pekerjaan tersimpan tidak bisa dibuka: " + h.pesan)
+        return
+    setB(h.b)
+    setPesan("Melanjutkan pekerjaan tersimpan: " + h.b.meta.nama + ", "
+             + str(h.b.parts.length) + " komponen.")
+
+
+def h_buka_lokal(setB, setTerpilih, setPesan):
+    h = muat_lokal()
+    if h.pesan != "":
+        setPesan(h.pesan)
+        return
+    setB(h.b)
+    setTerpilih(null)
+    setPesan("Pekerjaan tersimpan dimuat. " + str(h.b.parts.length) + " komponen.")
+
+
+def h_buka_berkas(setB, setTerpilih, setPesan, event):
+    # Membuka berkas proyek yang dipilih pengguna. Pemeriksaannya ada di mesin inti
+    # supaya berkas yang rusak ditolak dengan pesan, bukan membuat halaman berhenti.
+    berkas = event.target.files[0]
+    if berkas == undefined or berkas == null:
+        return
+    baca = new FileReader()
+    baca.onload = lambda ev: terapkan_berkas(ev, setB, setTerpilih, setPesan)
+    baca.readAsText(berkas)
+    event.target.value = ""
+
+
+def terapkan_berkas(ev, setB, setTerpilih, setPesan):
+    h = dari_teks(ev.target.result)
+    if h.pesan != "":
+        setPesan(h.pesan)
+        return
+    setB(h.b)
+    setTerpilih(null)
+    setPesan("Berkas dimuat. " + str(h.b.parts.length) + " komponen, " + str(h.b.nets.length) + " net.")
 
 
 def h_kunci(b, setB, setPesan, ref, kunci):
@@ -572,6 +639,12 @@ component Editor():
         redo: lambda: redo_r(rujukan.current.b(), hist, setB, setPesan),
     }
 
+    # Muat pekerjaan tersimpan saat halaman dibuka.
+    #
+    # Ini yang membuat janji "pekerjaan kembali saat halaman dibuka lagi" jadi benar.
+    # Dijalankan sekali, dan hanya kalau ada yang tersimpan: tanpa itu, halaman selalu
+    # mulai dari board contoh dan pekerjaan orang hilang tanpa peringatan.
+    useEffect(lambda: muat_awal(setB, setPesan), [])
     useEffect(lambda: pasang(kanvasRef.current, rujukan, alatRef), [])
     useEffect(lambda: sinkron(alatRef.current, b), [b])
     useEffect(lambda: set_mode(alatRef.current, mode), [mode])
@@ -598,6 +671,16 @@ component Editor():
                            onClick=lambda: setTampil3d(false)): "2D"
                     button(className=("seg" + (" aktif" if tampil3d else "")),
                            onClick=lambda: setTampil3d(true)): "3D"
+                button(className="kecil-tombol", onClick=lambda: h_simpan_lokal(b, setPesan),
+                       title="Simpan di penyimpanan browser (Ctrl+S)"): "Simpan"
+                if ada_lokal():
+                    button(className="kecil-tombol", onClick=lambda: h_buka_lokal(setB, setTerpilih, setPesan),
+                           title="Buka pekerjaan yang tersimpan di browser"): "Buka tersimpan"
+                button(className="kecil-tombol", onClick=lambda: h_unduh_proyek(b, setPesan),
+                       title="Unduh berkas proyek"): "Unduh proyek"
+                label(className="kecil-tombol tombol-berkas"):
+                    "Buka berkas"
+                    input(type="file", accept=".json", onChange=lambda ev: h_buka_berkas(setB, setTerpilih, setPesan, ev))
                 button(className="kecil-tombol", onClick=lambda: muat_contoh(setB, setTerpilih, setPesan)):
                     "Muat contoh"
                 button(className="kecil-tombol", onClick=lambda: kosongkan(setB, setTerpilih, setPesan)):
@@ -998,6 +1081,9 @@ def pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan):
             setMode("ukur")
         elif k == "z":
             setMode("zona")
+        elif (ev.ctrlKey or ev.metaKey) and k == "s":
+            ev.preventDefault()
+            rujukan.current.simpan()
         elif k == "r" and st.terpilih != null:
             rujukan.current.pakai(part_putar(rujukan.current.b(), st.terpilih, 90), false)
         elif k == "delete" and st.terpilih != null:
