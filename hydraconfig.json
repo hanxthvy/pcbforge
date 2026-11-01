@@ -1,0 +1,19 @@
+{
+  "name": "pcbforge",
+  "root": "./src",
+  "outputDir": "./dist",
+  "base": "/",
+  "entries": {
+    "app": "./src/main.hyx"
+  },
+  "server": {
+    "port": 5190,
+    "host": "127.0.0.1"
+  },
+  "compiler": {
+    "target": "react-18"
+  },
+  "rendering": {
+    "ssg": false
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "pcbforge",
+  "version": "0.1.0",
+  "description": "PCB design tool in the browser, with an AI assistant, that exports fab-ready Gerber.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "hydra build",
+    "dev": "hydra dev",
+    "test": "bash tools/test.sh"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "hydrascript": "^0.5.0"
+  }
+}

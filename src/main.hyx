@@ -1,0 +1,33 @@
+# [xihanzu-NR]
+import "./app.css"
+
+from "react" import useState, useEffect, useRef
+from "react-dom/client" import createRoot
+
+from "./core/lib.hys" import lib_names, lib_get
+from "./core/board.hys" import board_baru, net_pin_tambah, ringkas
+from "./core/drc.hys" import periksa, ringkas_drc
+
+
+component App():
+    [nak, setNak] = useState(false)
+    jumlah = lib_names().length
+    div(className="shell"):
+        h1: "PCBForge"
+        p: f"{jumlah} footprint siap dipakai"
+        button(onClick=lambda: setNak(not nak)):
+            "coba"
+        if nak:
+            p: "Jalan."
+        else:
+            p(className="dim"): "Mesin inti terpasang, antarmuka menyusul."
+
+
+def main():
+    akar = document.getElementById("root")
+    if akar == null:
+        return
+    createRoot(akar).render(App())
+
+
+main()

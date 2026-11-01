@@ -1,0 +1,23 @@
+/* [xihanzu-NR] */
+:root {
+  --bg: #0f1115;
+  --fg: #e6e8ee;
+  --dim: #8b93a7;
+  --line: #232833;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 ui-sans-serif, system-ui, sans-serif;
+}
+.shell { padding: 24px; }
+h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.02em; }
+p { margin: 4px 0; color: var(--dim); }
+button {
+  margin-top: 12px; padding: 6px 14px; border-radius: 8px;
+  border: 1px solid var(--line); background: #1a1f2a; color: var(--fg);
+  cursor: pointer;
+}
+button:hover { border-color: #3a4356; }
