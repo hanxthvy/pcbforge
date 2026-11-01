@@ -1,4 +1,6 @@
+# [xihanzu-NR]
 build/
+dist/
 node_modules/
-*.log
 out/
+*.log
