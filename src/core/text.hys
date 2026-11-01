@@ -1,0 +1,72 @@
+# [xihanzu-NR]
+# Teks goresan untuk sablon.
+#
+# Kenapa modul sendiri: teks dipakai di dua tempat yang tidak boleh saling
+# menggantungkan diri. Penulis Gerber memakainya untuk sablon, dan penampil memakainya
+# untuk menggambar penanda di kanvas. Kalau salah satu bergantung pada yang lain,
+# mesin inti jadi bergantung pada penulis Gerber, dan lingkaran impor seperti itu sudah
+# pernah membuat satu modul menyeret seluruh rantai.
+#
+# Ukuran huruf ditentukan pemanggil: tinggi dalam milimeter, tinggi sel font 6 satuan.
+# Jadi skala = tinggi / 6.
+
+from "./font.hys" import FONT, lebar_huruf, tinggi_huruf
+
+
+export def goresan_teks(teks, x, y, tinggi, jarak):
+    # Mengembalikan daftar goresan untuk `teks`.
+    #
+    #   teks   yang ditulis, huruf besar semua; huruf kecil diubah dulu
+    #   x, y   sudut KIRI BAWAH teks, koordinat board
+    #   tinggi tinggi huruf, milimeter
+    #   jarak  tambahan antar huruf, milimeter
+    #
+    # Sumbu Y di board mengarah ke bawah, sedangkan font disimpan dengan y=0 di atas.
+    # Jadi tiap titik dibalik: `y - (6 - p.y) * skala`.
+    skala = tinggi / tinggi_huruf()
+    maju = lebar_huruf() * skala + jarak
+    out = []
+    teks_besar = teks.toUpperCase()
+    i = 0
+    while i < teks_besar.length:
+        c = teks_besar[i]
+        bentuk = FONT[c]
+        if bentuk != undefined:
+            for s in bentuk:
+                jalur = []
+                for p in s:
+                    jalur.push({
+                        x: x + i * maju + p[0] * skala,
+                        y: y - (tinggi_huruf() - p[1]) * skala,
+                    })
+                if jalur.length > 1:
+                    out.push(jalur)
+        i += 1
+    return out
+
+
+export def lebar_teks(teks, tinggi, jarak):
+    # Lebar total, supaya pemanggil bisa memusatkan atau menaruh di kiri penanda.
+    skala = tinggi / tinggi_huruf()
+    maju = lebar_huruf() * skala + jarak
+    return teks.length * maju
+
+
+export def tinggi_untuk(lebar_maks, teks, jarak):
+    # Tinggi huruf supaya teks muat dalam lebar tertentu. Dipakai untuk menyesuaikan
+    # penanda dengan ukuran komponen: penanda di 0402 harus lebih kecil dari di TO220.
+    if teks.length == 0:
+        return 0.8
+    per_huruf = lebar_maks / teks.length
+    skala = (per_huruf - jarak) / lebar_huruf()
+    return clamp_tinggi(skala * tinggi_huruf())
+
+
+export def clamp_tinggi(t):
+    # Batas akal: di bawah 0.6 mm sablon tidak terbaca dan pabrik memperingatkannya;
+    # di atas 3 mm penanda jadi lebih besar dari komponennya.
+    if t < 0.6:
+        return 0.6
+    if t > 3:
+        return 3
+    return t
