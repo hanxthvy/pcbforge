@@ -33,13 +33,73 @@ export def board_sah(b):
 
 
 export def pesan_gagal(b, salinan):
-    # Jalan pintas untuk pemeriksaan: kalau ada pelanggaran BARU setelah perubahan,
-    # perintahnya ditolak.
-    lama = periksa(b)
-    baru = periksa(salinan)
+    # Kalau ada pelanggaran GEOMETRI baru setelah perubahan, perintahnya ditolak.
+    #
+    # Yang TIDAK dihitung: pin yang belum masuk net.
+    #
+    # Ini penting dan sempat salah: dengan menghitung semua jenis pelanggaran, menaruh
+    # komponen SELALU ditolak, karena komponen baru pasti punya pad yang belum
+    # disambungkan. Alurnya jadi mustahil: taruh komponen -> sambungkan semua padnya.
+    # Padahal setiap alat PCB membolehkan komponen dengan pad menggantung; di KiCad ia
+    # hanya memunculkan garis ratsnest.
+    #
+    # Jadi yang diperiksa hanya pelanggaran yang berarti tembaganya SALAH TEMPAT:
+    # jarak, lebar jalur, tepi board, dan annular ring. Itu yang tidak bisa diperbaiki
+    # dengan menyambung net.
+    lama = hitung_geometri(b)
+    baru = hitung_geometri(salinan)
     if baru.length > lama.length:
         return baru[baru.length - 1].pesan
     return ""
+
+
+export def hitung_geometri(b):
+    out = []
+    for t in periksa(b):
+        if t.jenis == "pin-yatim":
+            continue
+        out.push(t)
+    return out
+
+
+export def tempat_kosong(b, lib):
+    # Mencari tempat untuk komponen baru yang tidak menabrak yang sudah ada.
+    #
+    # Sebelumnya komponen baru selalu ditaruh di titik yang sama (lebar/2+3), jadi
+    # komponen KEDUA selalu ditolak karena tumpang tindih. Alurnya jadi mustahil:
+    # taruh satu komponen, lalu tidak bisa menaruh yang lain.
+    #
+    # Cara: telusuri kisi dari kiri atas, kembalikan titik pertama yang tidak
+    # bertabrakan dengan komponen mana pun. Sama seperti yang dilakukan alat PCB.
+    if lib_ada(lib) == false:
+        return { x: 5, y: 5 }
+    lb = lib_get(lib)
+    langkah = 2.54
+    # sisakan tepi minimal 1 mm, supaya komponen tidak menempel potongan tepi
+    max_x = b.outline.lebar - lb.w / 2 - 1
+    max_y = b.outline.tinggi - lb.h / 2 - 1
+    y = lb.h / 2 + 1
+    while y <= max_y:
+        x = lb.w / 2 + 1
+        while x <= max_x:
+            if tidak_tabrakan(b, lib, x, y):
+                return { x: x, y: y }
+            x += langkah
+        y += langkah
+    # Board penuh: taruh di tengah, dan biarkan pemeriksaan yang menolak kalau memang
+    # tidak ada tempat. Lebih baik begitu daripada diam-diam menaruh di luar board.
+    return { x: b.outline.lebar / 2, y: b.outline.tinggi / 2 }
+
+
+export def tidak_tabrakan(b, lib, x, y):
+    lb = lib_get(lib)
+    for q in b.parts:
+        lq = lib_get(q.lib)
+        if lq == null:
+            continue
+        if Math.abs(x - q.x) < (lb.w + lq.w) / 2 + 0.3 and Math.abs(y - q.y) < (lb.h + lq.h) / 2 + 0.3:
+            return false
+    return true
 
 
 export def part_tambah(b, lib, ref, x, y, rot, side, nilai):
@@ -53,6 +113,11 @@ export def part_tambah(b, lib, ref, x, y, rot, side, nilai):
     if cari_part(b, ref) != null:
         return { b: b, pesan: "penanda " + ref + " sudah dipakai" }
 
+    if x <= 0 and y <= 0:
+        # Titik tidak disebut pemanggil: carikan tempat yang kosong.
+        t = tempat_kosong(b, lib)
+        x = t.x
+        y = t.y
     if x < 0 or y < 0 or x > b.outline.lebar or y > b.outline.tinggi:
         return { b: b, pesan: "komponen di luar area board" }
     salinan = board_salin(b)

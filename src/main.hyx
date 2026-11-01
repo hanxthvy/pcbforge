@@ -84,7 +84,10 @@ def h_taruh(b, setB, setTerpilih, setPesan, net, nama):
         setPesan("Pilih net dulu di panel Net sebelum menaruh komponen.")
         return
     lb = lib_get(nama)
-    h = part_tambah(b, nama, "", lb.w / 2 + 3, lb.h / 2 + 3, 0, "F", nama)
+    # Koordinat 0,0 berarti "carikan tempat kosong" di mesin inti. Versi sebelumnya
+    # memakai titik yang sama untuk semua komponen baru, jadi komponen kedua selalu
+    # ditolak karena tumpang tindih.
+    h = part_tambah(b, nama, "", 0, 0, 0, "F", nama)
     if h_pesan(h, setPesan) == false:
         return
     ref = h.b.parts[h.b.parts.length - 1].ref
@@ -678,6 +681,11 @@ component Editor():
     useEffect(lambda: sinkron(alatRef.current, b), [b])
     useEffect(lambda: set_mode(alatRef.current, mode), [mode])
     useEffect(lambda: set_jalur(alatRef.current, layer, lebar, netAktif), [layer, lebar, netAktif])
+    # Perubahan lapisan diberitahukan lewat efek, bukan hanya lewat tombol di panel Alat.
+    # Sebelumnya auto-via hanya jalan kalau lapisan diganti dari panel Alat; menggantinya
+    # dari panel Tampilan (yang juga punya pemilih lapisan) tidak menyisipkan via.
+    # Dengan efek, semua jalur perubahan tercakup.
+    useEffect(lambda: set_layer_alat(alatRef.current, layer), [layer])
     useEffect(lambda: set_pilih(alatRef.current, terpilih), [terpilih])
     useEffect(lambda: pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan), [])
     useEffect(lambda: atur_kisi(alatRef.current, kisi, snap), [kisi, snap])
@@ -1092,6 +1100,18 @@ def sinkron(alat, b):
 def set_mode(alat, m):
     if alat != null:
         alat.setMode(m)
+
+
+def set_layer_alat(alat, lap):
+    if alat != null:
+        alat.setLayerJalur(lap)
+
+
+def set_layer(alat, lap, setLayer):
+    # Lapisan aktif diubah lewat alat, supaya auto-via saat menggambar bisa terjadi.
+    setLayer(lap)
+    if alat != null:
+        alat.setLayerJalur(lap)
 
 
 def set_jalur(alat, layer, lebar, net):

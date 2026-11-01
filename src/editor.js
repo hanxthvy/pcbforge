@@ -969,6 +969,24 @@ export function papan_alat(kanvas, opsi) {
         G.gambarJalur(j.net, j.layer, j.lebar, pts)
     }
 
+    a.setLayerJalur = (lap) => {
+        // Ganti lapisan saat jalur sedang digambar menyisipkan VIA di titik terakhir.
+        //
+        // Ini perilaku yang dipakai semua alat PCB: menggambar jalur, tekan tombol
+        // ganti lapisan, dan jalurnya lanjut di lapisan lain lewat via yang dibuat
+        // otomatis. Tanpa ini, orang harus berhenti menggambar, menaruh via, lalu
+        // mulai lagi dari titik itu.
+        const lama = a.jalur !== null ? a.jalur.layer : null
+        a.layer = lap
+        if (a.jalur !== null && lama !== null && lama !== lap) {
+            const t = a.jalur.pts[a.jalur.pts.length - 1]
+            G.tambahVia(t.x, t.y)
+            a.jalur.layer = lap
+            G.pesan('Via dibuat di ' + t.x + ', ' + t.y + ' untuk pindah ke lapisan ' + lap + '.')
+        }
+        a.gambar()
+    }
+
     a.setMode = (m) => {
         if (a.mode === 'jalur' && m !== 'jalur') a.selesaiJalur()
         if (a.mode === 'zona' && m !== 'zona') a.zonaBaru = null
@@ -979,7 +997,21 @@ export function papan_alat(kanvas, opsi) {
 
     a.setBoard = (b) => {
         a.b = b
-        a.jalur = null
+        // Jalur yang sedang digambar TIDAK dihapus di sini.
+        //
+        // Versi sebelumnya menghapusnya setiap board berubah, dan itu merusak alur yang
+        // paling sering dipakai: menggambar jalur, tekan tombol ganti lapisan, via
+        // dibuat otomatis -> board berubah -> jalur yang sedang digambar ikut terhapus.
+        // Yang terlihat: pesan "Jalur butuh minimal dua titik" dan jalurnya hilang.
+        //
+        // Sekarang jalurnya dibuang hanya kalau net-nya memang sudah tidak ada.
+        if (a.jalur !== null) {
+            let ada = false
+            for (const n of b.nets) {
+                if (n.nama === a.jalur.net) ada = true
+            }
+            if (ada === false) a.jalur = null
+        }
         if (a.terpilih !== null && a.cariPart(a.terpilih) === null) a.terpilih = null
         a.gambar()
     }

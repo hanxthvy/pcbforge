@@ -105,6 +105,26 @@ def utama():
     cek("ukuran baru berhasil", h.pesan == "", h.pesan)
     cek("lebar berubah", h.b.outline.lebar == 60, str(h.b.outline.lebar))
 
+    # ---- alur nyata: board kosong, taruh komponen, baru sambungkan ----
+    #
+    # Ini yang gagal sebelumnya: menaruh komponen SELALU ditolak karena pad keduanya
+    # belum punya net. Alurnya jadi mustahil. Setiap alat PCB membolehkan komponen
+    # dengan pad menggantung.
+    bk = board_baru("kosong")
+    h = net_tambah(bk, "VCC")
+    h = part_tambah(h.b, "R_0805", "", 10, 10, 0, "F", "1K")
+    cek("taruh komponen di board kosong berhasil", h.pesan == "", h.pesan)
+    cek("komponen benar-benar masuk", h.b.parts.length == 1, str(h.b.parts.length))
+    ref0 = h.b.parts[0].ref
+    h = net_pin(h.b, "VCC", ref0, 1)
+    cek("sambungkan pad pertama berhasil", h.pesan == "", h.pesan)
+    h = net_pin(h.b, "VCC", ref0, 2)
+    cek("sambungkan pad kedua berhasil", h.pesan == "", h.pesan)
+
+    # komponen dengan pad menggantung tetap boleh ditaruh, berkali-kali
+    h = part_tambah(h.b, "R_0805", "", 20, 10, 0, "F", "1K")
+    cek("komponen kedua dengan pad menggantung berhasil", h.pesan == "", h.pesan)
+
     # ---- dokumen asli tidak boleh tersentuh saat perintah ditolak ----
     b3 = board_contoh_siap()
     sebelum = b3.parts.length
