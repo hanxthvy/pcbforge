@@ -1,0 +1,72 @@
+# [xihanzu-NR]
+# Uji konektivitas: memastikan tidak ada jalur menggantung.
+#
+# DRC memeriksa jarak dan lebar, tapi tidak memeriksa apakah sebuah jalur benar-benar
+# menyentuh pad. Jalur yang berhenti di ruang kosong lolos DRC dengan tenang dan baru
+# ketahuan setelah board dicetak. Uji ini menutup celah itu.
+
+from "./board.hys" import cari_pad
+from "./lib.hys" import lib_ada
+from "./contoh.hys" import board_contoh_siap
+from "./lib.mjs" import lib_get
+from "./geom.hys" import point_seg_dist, pt
+from "./units.hys" import gabung_daftar
+
+EPS = 0.02   # 20 mikron, jauh di bawah presisi pabrik
+
+
+export def pad_se_net(b, nama_net):
+    # Semua posisi pad yang termasuk satu net.
+    out = []
+    for n in b.nets:
+        if n.nama != nama_net:
+            continue
+        for p in n.pin:
+            pd = cari_pad(b, p.ref, p.pad)
+            if pd != null:
+                out.push({ x: pd.x, y: pd.y, r: Math.max(pd.w, pd.h) / 2, siapa: p.ref + "." + str(p.pad) })
+        for v in n.via:
+            out.push({ x: v.x, y: v.y, r: v.diameter / 2, siapa: "via" })
+    return out
+
+
+export def menyentuh(titik, item):
+    return Math.sqrt((titik.x - item.x) * (titik.x - item.x) +
+                     (titik.y - item.y) * (titik.y - item.y)) <= item.r + EPS
+
+
+export def uji(b):
+    masalah = []
+    for n in b.nets:
+        for t in n.trace:
+            awal = t.pts[0]
+            akhir = t.pts[t.pts.length - 1]
+            # Titik tengah jalur juga harus dianggap titik sambung: jalur GND di
+            # lapisan bawah menyambung ke jalur GND lain lewat persilangan, bukan
+            # lewat ujungnya.
+            lain = []
+            for t2 in n.trace:
+                if t2 == t:
+                    continue
+                lain.push({ pts: t2.pts, lebar: t2.lebar, layer: t2.layer })
+            for ujung, sebut in [[awal, "awal"], [akhir, "ujung"]]:
+                tersambung = false
+                for pd in pad_se_net(b, n.nama):
+                    if menyentuh(ujung, pd):
+                        tersambung = true
+                if tersambung == false:
+                    for t2 in lain:
+                        if t2.layer != t.layer:
+                            continue
+                        i = 0
+                        while i < t2.pts.length - 1:
+                            d = point_seg_dist(pt(ujung.x, ujung.y),
+                                               { a: t2.pts[i], b: t2.pts[i + 1] })
+                            if d <= t2.lebar / 2 + EPS:
+                                tersambung = true
+                            i += 1
+                if tersambung == false:
+                    masalah.push(n.nama + ": " + sebut + " jalur menggantung di " +
+                                 str(Math.round(ujung.x * 100) / 100) + "," +
+                                 str(Math.round(ujung.y * 100) / 100))
+    return masalah

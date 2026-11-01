@@ -4,9 +4,6 @@
 # jadi kumpulan ruas (trace) atau persegi/lingkaran (pad), jadi tidak perlu bentuk
 # yang lebih rumit.
 
-import "math" as math
-
-
 export def pt(x, y):
     return { x: x, y: y }
 
@@ -22,7 +19,7 @@ export def dist2(a, b):
 
 
 export def dist(a, b):
-    return math.sqrt(dist2(a, b))
+    return Math.sqrt(dist2(a, b))
 
 
 export def seg_len(s):
@@ -33,7 +30,7 @@ export def seg_dir(s):
     # Vektor satuan arah ruas. Ruas berpanjang nol mengembalikan (0,0).
     dx = s.b.x - s.a.x
     dy = s.b.y - s.a.y
-    n = math.sqrt(dx * dx + dy * dy)
+    n = Math.sqrt(dx * dx + dy * dy)
     if n == 0:
         return pt(0, 0)
     return pt(dx / n, dy / n)
@@ -66,7 +63,7 @@ export def point_seg_dist2(p, s):
 
 
 export def point_seg_dist(p, s):
-    return math.sqrt(point_seg_dist2(p, s))
+    return Math.sqrt(point_seg_dist2(p, s))
 
 
 export def seg_seg_dist2(s1, s2):
@@ -101,7 +98,7 @@ export def seg_intersect(s1, s2):
 
 
 export def seg_seg_dist(s1, s2):
-    return math.sqrt(seg_seg_dist2(s1, s2))
+    return Math.sqrt(seg_seg_dist2(s1, s2))
 
 
 export def bbox_add(b, x, y):

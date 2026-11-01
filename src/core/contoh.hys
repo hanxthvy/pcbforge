@@ -1,0 +1,97 @@
+# [xihanzu-NR]
+# Board contoh: pembagi tegangan dengan indikator LED.
+#
+# Ditaruh di mesin inti, bukan di halaman, supaya aplikasi dan uji memakai board yang
+# SAMA. Kalau board di halaman berbeda dari yang diuji, uji tidak membuktikan apa pun
+# tentang yang dilihat pengguna.
+#
+# 40x25 mm, 5 komponen, 4 net, dua lapis dengan via.
+
+from "./board.hys" import board_baru, net_pin_tambah, cari_pad
+from "./lib.hys" import lib_get
+
+
+export def tambah(b, ref, lib, x, y, nilai):
+    b.parts.push({ ref: ref, lib: lib, nilai: nilai, x: x, y: y, rot: 0, side: "F" })
+
+
+export def titik(b, ref, nomor):
+    pd = cari_pad(b, ref, nomor)
+    if pd == null:
+        return { x: 0, y: 0 }
+    return { x: pd.x, y: pd.y }
+
+
+export def jalur(b, nama, layer, lebar, pts):
+    for n in b.nets:
+        if n.nama == nama:
+            n.trace.push({ layer: layer, lebar: lebar, pts: pts })
+
+
+export def via(b, nama, x, y):
+    for n in b.nets:
+        if n.nama == nama:
+            n.via.push({ x: x, y: y, bor: 0.4, diameter: 0.8 })
+
+
+export def board_contoh():
+    b = board_baru("pcbforge-contoh")
+    b.outline.lebar = 40
+    b.outline.tinggi = 25
+    b.outline.radius = 2
+
+    tambah(b, "J1", "PINHDR_1x02", 5, 12.5, "MASUK")
+    tambah(b, "R1", "R_0805", 13, 7, "330R")
+    tambah(b, "D1", "LED_0805", 13, 18, "MERAH")
+    tambah(b, "R2", "R_0805", 24, 12.5, "1K")
+    tambah(b, "J2", "PINHDR_1x02", 35, 12.5, "KELUAR")
+
+    net_pin_tambah(b, "VCC", "J1", 1)
+    net_pin_tambah(b, "VCC", "R1", 1)
+    net_pin_tambah(b, "N1", "R1", 2)
+    net_pin_tambah(b, "N1", "D1", 1)
+    net_pin_tambah(b, "N2", "D1", 2)
+    net_pin_tambah(b, "N2", "R2", 1)
+    net_pin_tambah(b, "GND", "R2", 2)
+    net_pin_tambah(b, "GND", "J1", 2)
+    net_pin_tambah(b, "GND", "J2", 1)
+    net_pin_tambah(b, "GND", "J2", 2)
+    return b
+
+
+export def board_contoh_siap():
+    # Board contoh yang sudah berjalur.
+    #
+    # Semua titik diambil dari posisi pad yang dihitung pustaka lewat cari_pad(),
+    # bukan angka mati, jadi uji ini tetap benar kalau angka footprint berubah.
+    b = board_contoh()
+    j1_1 = titik(b, "J1", 1)
+    j1_2 = titik(b, "J1", 2)
+    r1_1 = titik(b, "R1", 1)
+    r1_2 = titik(b, "R1", 2)
+    d1_1 = titik(b, "D1", 1)
+    d1_2 = titik(b, "D1", 2)
+    r2_1 = titik(b, "R2", 1)
+    r2_2 = titik(b, "R2", 2)
+    j2_1 = titik(b, "J2", 1)
+    j2_2 = titik(b, "J2", 2)
+
+    # VCC: J1.1 ke R1.1.
+    jalur(b, "VCC", "F", 0.4, [j1_1, { x: 9, y: j1_1.y }, r1_1])
+
+    # N1 harus melintasi VCC untuk turun ke D1.1, jadi lewat lapisan bawah dengan
+    # dua via. Di board dua lapis, itulah fungsinya via; menggeser jalur saja
+    # menghasilkan korsleting dengan VCC.
+    jalur(b, "N1", "B", 0.4, [r1_2, { x: r1_2.x, y: d1_1.y }, d1_1])
+    via(b, "N1", r1_2.x, r1_2.y)
+    via(b, "N1", d1_1.x, d1_1.y)
+
+    # N2: D1.2 ke R2.1, di lapisan atas dan menjauh dari VCC.
+    jalur(b, "N2", "F", 0.4, [d1_2, { x: 17, y: d1_2.y }, { x: 17, y: r2_1.y }, r2_1])
+
+    # GND lewat lapisan bawah. J1.2 dan J2.2 sudah berlubang tembus, jadi tinggal
+    # disambung jalur; R2.2 pad SMD, jadi butuh satu via.
+    jalur(b, "GND", "B", 0.6, [j1_2, { x: j1_2.x, y: 21 }, { x: j2_2.x, y: 21 }, j2_2])
+    jalur(b, "GND", "B", 0.6, [r2_2, { x: r2_2.x, y: 21 }, { x: j2_2.x, y: 21 }])
+    via(b, "GND", r2_2.x, r2_2.y)
+    return b

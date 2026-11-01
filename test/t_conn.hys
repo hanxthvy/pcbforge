@@ -1,0 +1,13 @@
+# [xihanzu-NR]
+# Uji konektivitas board contoh: tidak boleh ada jalur menggantung.
+
+from "./conn.mjs" import uji
+from "./contoh.mjs" import board_contoh_siap
+
+b = board_contoh_siap()
+masalah = uji(b)
+for m in masalah:
+    print("  GAGAL " + m)
+if masalah.length == 0:
+    print("  konektivitas: semua jalur tersambung")
+print("--- masalah=" + str(masalah.length))

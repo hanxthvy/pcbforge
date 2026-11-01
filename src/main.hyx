@@ -1,26 +1,203 @@
 # [xihanzu-NR]
+# Halaman utama PCBForge.
+#
+# Untuk sekarang tujuannya pembuktian: seluruh rantai dari mesin inti sampai ke
+# browser, dan ekspor Gerber yang bisa diunduh dari halaman ini tanpa perantara.
+# Editor kanvas menyusul di atas fondasi ini.
+
 import "./app.css"
 
-from "react" import useState, useEffect, useRef
+from "react" import useState, useEffect, useMemo, useRef
 from "react-dom/client" import createRoot
 
 from "./core/lib.hys" import lib_names, lib_get
-from "./core/board.hys" import board_baru, net_pin_tambah, ringkas
+from "./core/board.hys" import ringkas
+from "./core/contoh.hys" import board_contoh_siap
 from "./core/drc.hys" import periksa, ringkas_drc
+from "./core/gerber.hys" import gerber_semua
+
+# ---------- gambar kanvas 2D ----------
+
+def gambar_board(b, kanvas, skala):
+    # Menggambar board di kanvas 2D. Hanya untuk melihat; semua angka yang keluar
+    # ke pabrik tetap dari mesin inti.
+    if kanvas == null:
+        return
+    ctx = kanvas.getContext("2d")
+    lebar = kanvas.width
+    tinggi = kanvas.height
+    ctx.clearRect(0, 0, lebar, tinggi)
+    ctx.save()
+    ctx.scale(skala, skala)
+    ctx.translate(6, 6)
+
+    # badan board
+    ctx.fillStyle = "#0b3d2c"
+    ctx.beginPath()
+    ctx.rect(0, 0, b.outline.lebar, b.outline.tinggi)
+    ctx.fill()
+    ctx.strokeStyle = "#7dd3a0"
+    ctx.lineWidth = 0.3
+    ctx.stroke()
+
+    # jalur
+    for n in b.nets:
+        for t in n.trace:
+            ctx.strokeStyle = "#caa14a"
+            if t.layer == "B":
+                ctx.strokeStyle = "#4a7fca"
+            ctx.lineWidth = t.lebar
+            ctx.beginPath()
+            i = 0
+            while i < t.pts.length:
+                if i == 0:
+                    ctx.moveTo(t.pts[i].x, t.pts[i].y)
+                else:
+                    ctx.lineTo(t.pts[i].x, t.pts[i].y)
+                i += 1
+            ctx.stroke()
+
+    # pad dan badan komponen
+    for p in b.parts:
+        if lib_get(p.lib) == null:
+            continue
+        lb = lib_get(p.lib)
+        for pd in semua_pad_komponen(p):
+            ctx.fillStyle = "#d8c07a"
+            ctx.beginPath()
+            ctx.arc(pd.x, pd.y, Math.max(pd.w, pd.h) / 2, 0, Math.PI * 2)
+            ctx.fill()
+        # garis luar komponen
+        ctx.strokeStyle = "#c9d1e0"
+        ctx.lineWidth = 0.15
+        ctx.strokeRect(p.x - lb.w / 2, p.y - lb.h / 2, lb.w, lb.h)
+        ctx.fillStyle = "#8b93a7"
+        ctx.font = "1.6px sans-serif"
+        ctx.fillText(p.ref, p.x - lb.w / 2, p.y - lb.h / 2 - 0.8)
+
+    # via
+    for n in b.nets:
+        for v in n.via:
+            ctx.fillStyle = "#9aa7bd"
+            ctx.beginPath()
+            ctx.arc(v.x, v.y, v.diameter / 2, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.fillStyle = "#0f1115"
+            ctx.beginPath()
+            ctx.arc(v.x, v.y, v.bor / 2, 0, Math.PI * 2)
+            ctx.fill()
+
+    ctx.restore()
+
+
+def semua_pad_komponen(p):
+    # Semua pad satu komponen, dalam koordinat board.
+    from "./core/board.hys" import semua_pad
+    return semua_pad(p, lib_get(p.lib))
+
+
+# ---------- unduh ----------
+
+def unduh_gerber(b):
+    # Membuat kesepuluh berkas lalu mengunduhnya satu per satu.
+    # Ini jalan pintas yang jujur: pengemasan jadi satu zip butuh pustaka zip, dan
+    # itu bisa ditambahkan nanti. Untuk pembuktian, berkasnya nyata dan lengkap.
+    berkas = gerber_semua(b)
+    for f in berkas:
+        # Blob dibuat TANPA objek opsi. Namanya harus `type`, dan `type` kata kunci
+        # Hydra sehingga tidak bisa jadi kunci objek (sama seperti `def`). Menulis
+        # `{ mime: ... }` akan diterima diam-diam oleh Blob dan diabaikan, jadi lebih
+        # jujur tidak menulis opsi sama sekali: berkasnya diunduh apa adanya, dan
+        # nama berkasnya sudah dikenali pabrik dari akhiran .gbr/.drl.
+        blob = new Blob([f.isi])
+        url = URL.createObjectURL(blob)
+        a = document.createElement("a")
+        a.href = url
+        a.download = f.nama
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+    return berkas.length
+
+
+# ---------- komponen ----------
+
+component Baris(nama, nilai):
+    div(className="baris"):
+        span(className="kunci"): nama
+        span(className="nilai"): nilai
+
+
+component PanelGerber(b):
+    [pesan, setPesan] = useState("")
+    div(className="kartu"):
+        h2: "Ekspor cetak"
+        p(className="dim"):
+            "Sepuluh berkas siap kirim ke pabrik: 2 tembaga, 2 mask, 2 sablon, "
+        p(className="dim"):
+            "2 pasta, potongan tepi, dan satu berkas bor Excellon."
+        button(onClick=lambda: setPesan(f"{unduh_gerber(b)} berkas diunduh")):
+            "Unduh Gerber"
+        if pesan:
+            p(className="ok"): pesan
+
+
+component PanelDRC(b):
+    temuan = periksa(b)
+    div(className="kartu"):
+        h2: "Pemeriksaan aturan"
+        if temuan.length == 0:
+            p(className="ok"): "Bersih. Board ini aman dikirim."
+        else:
+            p: f"{temuan.length} masalah"
+            for t in temuan:
+                div(className="temuan"):
+                    span(className="jenis"): t.jenis
+                    span: t.pesan
+
+
+component PanelKomponen(b):
+    div(className="kartu"):
+        h2: "Komponen"
+        for p in b.parts:
+            Baris(nama=p.ref + " · " + p.lib, nilai=p.nilai)
+
+
+component PanelNet(b):
+    div(className="kartu"):
+        h2: "Net"
+        for n in b.nets:
+            Baris(nama=n.nama, nilai=f"{n.pin.length} pin, {n.trace.length} jalur, {n.via.length} via")
 
 
 component App():
-    [nak, setNak] = useState(false)
-    jumlah = lib_names().length
+    b = useMemo(board_contoh_siap, [])
+    skalaRef = useRef(null)
+    kanvasRef = useRef(null)
+
+    useEffect(lambda: gambar_board(b, kanvasRef.current, 11), [b])
+
     div(className="shell"):
-        h1: "PCBForge"
-        p: f"{jumlah} footprint siap dipakai"
-        button(onClick=lambda: setNak(not nak)):
-            "coba"
-        if nak:
-            p: "Jalan."
-        else:
-            p(className="dim"): "Mesin inti terpasang, antarmuka menyusul."
+        header(className="kepala"):
+            h1: "PCBForge"
+            p(className="dim"):
+                f"Board contoh {b.outline.lebar} × {b.outline.tinggi} mm, 2 lapis. "
+        div(className="kolom"):
+            div(className="kiri"):
+                div(className="kartu"):
+                    h2: "Papan"
+                    canvas(ref=kanvasRef, width=460, height=290, className="papan")
+                    p(className="dim"):
+                        "Kuning: tembaga atas. Biru: tembaga bawah. Abu: via."
+                PanelGerber(b=b)
+            div(className="kanan"):
+                PanelDRC(b=b)
+                PanelKomponen(b=b)
+                PanelNet(b=b)
+        footer(className="kaki"):
+            p(className="dim"):
+                f"Mesin inti Hydra. {lib_names().length} footprint di pustaka."
 
 
 def main():

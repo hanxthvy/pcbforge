@@ -12,7 +12,6 @@
 # bisa dipakai menggabungkan modul lewat bundler. Maka compile per berkas, lalu
 # jalurnya diselaraskan ke .mjs. Aturan penulisannya sempit dan eksplisit:
 #   from './x.hys'  ->  from './x.mjs'
-#   from 'math'     ->  from './shim-math.mjs'
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +19,6 @@ HY="${HYDRA_BIN:-/root/projects/hydra/bin/hydra}"
 cd "$ROOT"
 rm -rf build
 mkdir -p build
-cp src/core/shim-math.mjs build/shim-math.mjs
 
 n=0
 for f in src/core/*.hys; do
@@ -43,7 +41,6 @@ for p in glob.glob("build/*.mjs"):
     # jalur modul sesama mesin inti
     s = re.sub(r"(from\s+['\"])\./([A-Za-z0-9_]+)\.hys(['\"])", r"\1./\2.mjs\3", s)
     # shim math
-    s = re.sub(r"(from\s+['\"])math(['\"])", r"\1./shim-math.mjs\2", s)
     open(p, "w", encoding="utf-8").write(s)
 PY
 
