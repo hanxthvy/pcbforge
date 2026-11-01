@@ -1,0 +1,103 @@
+# [xihanzu-NR]
+# Uji zona tembaga (copper pour).
+#
+# Zona adalah cara baku membuat bidang ground di board dua lapis, dan cara tembaganya
+# dihitung di Gerber melibatkan polaritas terbalik — bagian yang paling mudah salah
+# dan paling mahal akibatnya. Uji ini memeriksa hasilnya di berkas Gerber, bukan hanya
+# bahwa fungsinya mengembalikan tanpa pesan.
+
+from "./contoh.mjs" import board_contoh_siap
+from "./zone.mjs" import zona_tambah, zona_hapus, zona_untuk, zona_lubang, zona_sambung, luas_zona, zona_bermasalah
+from "./gerber.mjs" import lapisan_copper
+from "./drc.mjs" import periksa
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def i4(s):
+    return (s.split("G36*").length - 1)
+
+
+def utama():
+    b = board_contoh_siap()
+
+    # penolakan dulu
+    h = zona_tambah(b, "TIDAK_ADA", "B", 1, 1, 30, 20, 0.3)
+    cek("net tidak ada ditolak", h.pesan != "", h.pesan)
+    h = zona_tambah(b, "GND", "X", 1, 1, 30, 20, 0.3)
+    cek("lapisan salah ditolak", h.pesan != "", h.pesan)
+    h = zona_tambah(b, "GND", "B", 1, 1, 0.5, 0.5, 0.3)
+    cek("zona terlalu kecil ditolak", h.pesan != "", h.pesan)
+    h = zona_tambah(b, "GND", "B", 1, 1, 300, 300, 0.3)
+    cek("zona di luar board ditolak", h.pesan != "", h.pesan)
+    h = zona_tambah(b, "GND", "B", 1, 1, 30, 20, 0.05)
+    cek("clearance terlalu kecil ditolak", h.pesan != "", h.pesan)
+    cek("dokumen asli utuh setelah penolakan", b.zones.length == 0, str(b.zones.length))
+
+    # zona dasar di lapisan bawah
+    h = zona_tambah(b, "GND", "B", 0.5, 0.5, 39.5, 24.5, 0.3)
+    cek("zona GND dibuat", h.pesan == "", h.pesan)
+    b2 = h.b
+    cek("zona tersimpan", b2.zones.length == 1, str(b2.zones.length))
+    cek("luas zona terhitung", luas_zona(b2) > 800, str(luas_zona(b2)))
+
+    z = b2.zones[0]
+    cek("zona mengumpulkan sambungan", zona_sambung(b2, z).length > 0, str(zona_sambung(b2, z).length))
+    cek("zona mengumpulkan lubang", zona_lubang(b2, z).length > 0, str(zona_lubang(b2, z).length))
+
+    # Gerber: bidang harus ada, dan polaritas harus dipulihkan
+    cu = lapisan_copper(b2, "B")
+    cek("bidang G36 digambar", i4(cu) >= 1, str(i4(cu)) + " bidang")
+    cek("region ditutup G37", (cu.split("G37*").length - 1) >= 1, "")
+    cek("polaritas terbalik dipakai", cu.indexOf("%LPC*%") > 0, "")
+    # Kepala berkas sudah memuat LPD, jadi yang diperiksa adalah LPD yang muncul
+    # SESUDAH LPC — itu yang memulihkan polaritas.
+    pos_lpc = cu.indexOf("%LPC*%")
+    pos_lpd = cu.indexOf("%LPD*%", pos_lpc)
+    cek("polaritas dipulihkan sesudah LPC", pos_lpd > pos_lpc, "LPC@" + str(pos_lpc) + " LPD@" + str(pos_lpd))
+    cek("berkas tetap ditutup M02", cu.indexOf("M02*") > 0, "")
+    # lapisan atas tidak boleh punya zona
+    cua = lapisan_copper(b2, "F")
+    cek("lapisan atas tanpa bidang zona", i4(cua) == 0, str(i4(cua)))
+
+    # lebih dari satu zona: yang lama untuk net+lapisan sama diganti, bukan ditumpuk
+    h = zona_tambah(b2, "GND", "B", 2, 2, 20, 20, 0.3)
+    cek("zona lama diganti bukan ditumpuk", h.b.zones.length == 1, str(h.b.zones.length))
+
+    # Zona tanpa sambungan harus dilaporkan.
+    #
+    # Dipakai net N2, bukan N1: N1 punya dua VIA yang menembus lapisan bawah, jadi zona
+    # N1 di lapisan itu memang benar-benar tersambung. Percobaan pertama memakai N1 dan
+    # asersinya salah, bukan alatnya.
+    h = zona_tambah(b, "N2", "B", 0.5, 0.5, 39.5, 24.5, 0.3)
+    cek("zona N2 di bawah tidak punya sambungan",
+        zona_sambung(h.b, h.b.zones[0]).length == 0,
+        str(zona_sambung(h.b, h.b.zones[0]).length) + " sambungan")
+    m = zona_bermasalah(h.b)
+    ada = false
+    for x in m:
+        if x.pesan.indexOf("belum tersambung") > 0:
+            ada = true
+    cek("zona mengapung dilaporkan", ada, str(m.length) + " catatan")
+
+    # hapus
+    h = zona_hapus(b2, "GND", "B")
+    cek("hapus zona berhasil", h.pesan == "" and h.b.zones.length == 0, h.pesan)
+    h = zona_hapus(b2, "GND", "F")
+    cek("hapus zona yang tidak ada ditolak", h.pesan != "", h.pesan)
+
+    return 0
+
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1

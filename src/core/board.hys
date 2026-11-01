@@ -34,6 +34,9 @@ export def board_baru(nama):
         outline: { lebar: 50, tinggi: 30, sudut: "bulat", radius: 2, lubang: [] },
         parts: [],
         nets: [],
+        # Bidang tembaga (copper pour). Berisi { net, layer, x1, y1, x2, y2, clearance }.
+        # Hampir setiap board dua lapis memakai bidang ground; lihat core/zone.hys.
+        zones: [],
     }
     return b
 

@@ -1,0 +1,232 @@
+# [xihanzu-NR]
+# Zona tembaga (copper pour / copper area).
+#
+# Kenapa ini wajib: hampir setiap board dua lapis memakai bidang ground. Bukan sekadar
+# rapi, tapi karena beberapa alasan yang nyata:
+#   - jalur balik arus pendek, jadi gangguan lebih kecil
+#   - impedansi jalur lebih stabil
+#   - panas lebih cepat menyebar
+#   - tembaga kurang terbuang saat dibuat
+# Tanpa zona, board dua lapis buatan sendiri kalah dari alat profesional mana pun.
+#
+# Bentuk zona di sini persegi panjang. Cukup untuk hampir semua board dua lapis, dan
+# tidak menuntut operasi potong-poligon yang rumit. Zona bentuk bebas bisa menyusul.
+#
+# Cara tembaga zona dihitung saat menulis Gerber, dan alasannya:
+#
+#   1. Zona digambar lebih dulu sebagai bidang penuh (region G36/G37)
+#   2. Lalu polaritas dibalik (LPC) dan tiap tembaga NET LAIN dilubangi, dilebarkan
+#      sebesar clearance. Polaritas terbalik memang dirancang untuk hal ini di Gerber.
+#   3. Polaritas dikembalikan (LPD), lalu semua tembaga biasa digambar normal di atasnya.
+#
+# Urutan itu penting. Kalau dibalik, LPC akan melubangi tembaga net lain yang sudah
+# digambar, dan board-nya rusak tanpa terlihat di gambar mana pun.
+
+from "./board.hys" import net_cari, semua_pad, cari_part
+from "./lib.hys" import lib_ada, lib_get
+from "./units.hys" import clamp
+
+
+export def zona_tambah(b, nama_net, layer, x1, y1, x2, y2, clearance):
+    # Menambah bidang tembaga satu net. `x1,y1` sudut kiri atas, `x2,y2` kanan bawah.
+    if b == null or b.zones == undefined:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    if net_cari(b, nama_net) == null:
+        return { b: b, pesan: "net " + nama_net + " belum ada" }
+    if layer != "F" and layer != "B":
+        return { b: b, pesan: "lapisan zona harus F atau B" }
+    if clearance < 0.1:
+        return { b: b, pesan: "clearance zona minimal 0.1 mm" }
+
+    xa = Math.min(x1, x2)
+    xb = Math.max(x1, x2)
+    ya = Math.min(y1, y2)
+    yb = Math.max(y1, y2)
+    if xb - xa < 1 or yb - ya < 1:
+        return { b: b, pesan: "zona minimal 1 x 1 mm" }
+    if xa < 0 or ya < 0 or xb > b.outline.lebar or yb > b.outline.tinggi:
+        return { b: b, pesan: "zona di luar area board" }
+
+    salinan = JSON.parse(JSON.stringify(b))
+    # Satu zona per net per lapisan: menumpuk dua zona di net dan lapisan yang sama
+    # tidak menambah apa pun dan hanya membuat berkas Gerber berlipat.
+    sisa = []
+    for z in salinan.zones:
+        if z.net != nama_net or z.layer != layer:
+            sisa.push(z)
+    sisa.push({
+        net: nama_net, layer: layer,
+        x1: xa, y1: ya, x2: xb, y2: yb,
+        clearance: clearance,
+    })
+    salinan.zones = sisa
+    return { b: salinan, pesan: "" }
+
+
+export def zona_hapus(b, nama_net, layer):
+    if b == null or b.zones == undefined:
+        return { b: b, pesan: "dokumen board tidak sah" }
+    sisa = []
+    ada = false
+    for z in b.zones:
+        if z.net == nama_net and z.layer == layer:
+            ada = true
+        else:
+            sisa.push(z)
+    if ada == false:
+        return { b: b, pesan: "tidak ada zona " + nama_net + " di lapisan " + layer }
+    salinan = JSON.parse(JSON.stringify(b))
+    salinan.zones = sisa
+    return { b: salinan, pesan: "" }
+
+
+export def zona_untuk(b, layer):
+    out = []
+    if b == null or b.zones == undefined:
+        return out
+    for z in b.zones:
+        if z.layer == layer:
+            out.push(z)
+    return out
+
+
+export def titik_di_zona(z, x, y, margin):
+    # Apakah sebuah titik berada di dalam zona, dengan tambahan jarak `margin`.
+    if x < z.x1 - margin or x > z.x2 + margin:
+        return false
+    if y < z.y1 - margin or y > z.y2 + margin:
+        return false
+    return true
+
+
+export def pad_di_zona(b, z, pd, ref):
+    # Apakah pad ini milik net zona. Pad net lain harus dilubangi; pad net sendiri
+    # dihubungkan. `ref` dipakai untuk mengetahui net pad.
+    for n in b.nets:
+        if n.nama != z.net:
+            continue
+        for q in n.pin:
+            if q.ref == ref and q.pad == pd.nama:
+                return true
+    return false
+
+
+export def zona_lubang(b, z):
+    # Daftar tembaga NET LAIN yang harus dilubangi dari zona, sudah dilebarkan
+    # sebesar clearance. Dipakai penulis Gerber dan pemeriksa aturan.
+    keluar = []
+    for p in b.parts:
+        if lib_ada(p.lib) == false:
+            continue
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.jenis != "tht" and p.side != z.layer:
+                continue
+            if pad_di_zona(b, z, pd, p.ref):
+                continue
+            if titik_di_zona(z, pd.x, pd.y, z.clearance + Math.max(pd.w, pd.h) / 2 + 1) == false:
+                continue
+            keluar.push({
+                jenis: "pad", x: pd.x, y: pd.y,
+                w: pd.w + 2 * z.clearance, h: pd.h + 2 * z.clearance,
+                bentuk: pd.bentuk, siapa: p.ref + "." + str(pd.nama),
+            })
+    for n in b.nets:
+        if n.nama == z.net:
+            continue
+        for t in n.trace:
+            if t.layer != z.layer:
+                continue
+            i = 0
+            while i < t.pts.length - 1:
+                dekat = titik_di_zona(z, t.pts[i].x, t.pts[i].y, z.clearance + t.lebar + 1)
+                if dekat == false:
+                    dekat = titik_di_zona(z, t.pts[i + 1].x, t.pts[i + 1].y, z.clearance + t.lebar + 1)
+                if dekat:
+                    keluar.push({
+                        jenis: "ruas",
+                        x1: t.pts[i].x, y1: t.pts[i].y,
+                        x2: t.pts[i + 1].x, y2: t.pts[i + 1].y,
+                        lebar: t.lebar + 2 * z.clearance,
+                        siapa: "jalur " + n.nama,
+                    })
+                i += 1
+        for v in n.via:
+            if titik_di_zona(z, v.x, v.y, z.clearance + v.diameter + 1) == false:
+                continue
+            keluar.push({
+                jenis: "pad", x: v.x, y: v.y,
+                w: v.diameter + 2 * z.clearance, h: v.diameter + 2 * z.clearance,
+                bentuk: "circle", siapa: "via " + n.nama,
+            })
+    return keluar
+
+
+export def zona_sambung(b, z):
+    # Pad dan via milik net zona yang berada di dalamnya. Ini yang membuat ground
+    # benar-benar tersambung: tanpa daftar ini, zona hanya tembaga mengapung.
+    #
+    # Penting: pad SMD hanya menyentuh lapisan tempat komponennya duduk. Pad di sisi
+    # atas TIDAK tersambung ke zona lapisan bawah. Versi pertama tidak memeriksa ini,
+    # jadi zona di lapisan bawah dilaporkan tersambung hanya karena ada pad SMD di
+    # atasnya yang kebetulan berada di dalam bidangnya. Board-nya akan dicetak dengan
+    # ground mengapung, dan tidak ada satu pun pemeriksaan yang menangkapnya.
+    out = []
+    for n in b.nets:
+        if n.nama != z.net:
+            continue
+        for q in n.pin:
+            pd = cari_pad_net(b, q.ref, q.pad)
+            if pd == null:
+                continue
+            if pd.jenis != "tht" and sisi_part(b, q.ref) != z.layer:
+                continue
+            if titik_di_zona(z, pd.x, pd.y, 0):
+                out.push({ x: pd.x, y: pd.y, w: pd.w, h: pd.h, bentuk: pd.bentuk, bor: pd.bor })
+        for v in n.via:
+            if titik_di_zona(z, v.x, v.y, 0):
+                out.push({ x: v.x, y: v.y, w: v.diameter, h: v.diameter, bentuk: "circle", bor: v.bor })
+    return out
+
+
+export def cari_pad_net(b, ref, nomor):
+    # Salinan kecil dari cari_pad, supaya modul ini tidak menyeret modul lain hanya
+    # untuk satu fungsi.
+    for p in b.parts:
+        if p.ref != ref:
+            continue
+        if lib_ada(p.lib) == false:
+            return null
+        for pd in semua_pad(p, lib_get(p.lib)):
+            if pd.nama == nomor:
+                return pd
+    return null
+
+
+export def sisi_part(b, ref):
+    for p in b.parts:
+        if p.ref == ref:
+            return p.side
+    return "F"
+
+
+export def luas_zona(b):
+    total = 0
+    for z in b.zones:
+        total += (z.x2 - z.x1) * (z.y2 - z.y1)
+    return Math.round(total * 100) / 100
+
+
+export def zona_bermasalah(b):
+    # Pemeriksaan ringan: zona yang tidak punya satu pun sambungan adalah tembaga
+    # mengapung. Itu bukan kesalahan pabrik, tapi hampir selalu bukan yang dimaksud,
+    # dan lebih baik diberitahukan.
+    out = []
+    for z in b.zones:
+        s = zona_sambung(b, z)
+        if s.length == 0:
+            out.push({
+                tingkat: "ingat",
+                pesan: "zona " + z.net + " di lapisan " + z.layer + " belum tersambung ke pad atau via mana pun",
+                x: (z.x1 + z.x2) / 2, y: (z.y1 + z.y2) / 2,
+            })
+    return out

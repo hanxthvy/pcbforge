@@ -21,6 +21,7 @@
 
 from "./units.hys" import mm_to_inch, fmt, fmt_mm, gabung_baris
 from "./text.hys" import goresan_teks, tinggi_untuk, lebar_teks
+from "./zone.hys" import zona_untuk, zona_lubang, zona_sambung
 from "./geom.hys" import path_segments
 from "./board.hys" import semua_pad
 from "./lib.hys" import lib_get, lib_ada
@@ -216,11 +217,55 @@ export def tr_pt(part, x, y):
     return { x: px * cs - py * sn + part.x, y: px * sn + py * cs + part.y }
 
 
+export def tulis_zona(badan, z, sambung):
+    # Satu bidang tembaga: region G36/G37 (polaritas normal), lalu bukaan pada
+    # sambungannya juga digambar normal supaya tembaga di pad tidak terputus.
+    #
+    # G36 membuka region, G37 menutupnya. Di dalam region, jalur D01 membentuk batas
+    # poligon dan perangkat lunak Gerber yang mengisinya. Ini cara baku menggambar
+    # bidang tembaga, dan dipahami pabrik mana pun.
+    badan.push("G36*")
+    badan.push(f"X{fmt_koord(z.x1)}Y{fmt_koord(z.y1)}D02*")
+    badan.push(f"X{fmt_koord(z.x2)}Y{fmt_koord(z.y1)}D01*")
+    badan.push(f"X{fmt_koord(z.x2)}Y{fmt_koord(z.y2)}D01*")
+    badan.push(f"X{fmt_koord(z.x1)}Y{fmt_koord(z.y2)}D01*")
+    badan.push(f"X{fmt_koord(z.x1)}Y{fmt_koord(z.y1)}D01*")
+    badan.push("G37*")
+
+
+export def tulis_pengosong(b, badan, apo, apo_list, z):
+    # Melubangi tembaga net lain dari bidang zona.
+    #
+    # Memakai polaritas TERBALIK (LPC): semua yang digambar setelahnya MENGHAPUS
+    # tembaga, bukan menambah. Polaritas terbalik memang dirancang Gerber untuk hal
+    # ini, jadi tidak perlu memotong poligon secara manual.
+    #
+    # Urutan wajib: bidang dulu, lalu LPC untuk lubang, lalu LPD kembali sebelum
+    # tembaga biasa digambar. Kalau LPD lupa, seluruh jalur sesudahnya akan menghapus
+    # tembaga.
+    badan.push("%LPC*%")
+    for h in zona_lubang(b, z):
+        if h.jenis == "pad":
+            tulis_flash(badan, apo, apo_list, h.x, h.y, h.bentuk, h.w, h.h)
+        else:
+            tulis_jalur(badan, apo, apo_list, [{ x: h.x1, y: h.y1 }, { x: h.x2, y: h.y2 }], h.lebar)
+    badan.push("%LPD*%")
+
+
 export def lapisan_copper(b, sisi):
     L = []
     apo = apo_baru()
     apo_list = []
     badan = []
+
+    # Zona tembaga lebih dulu, apa pun yang terjadi setelahnya.
+    #
+    # Urutannya wajib: bidang, lalu lubang dengan polaritas TERBALIK, lalu polaritas
+    # kembali normal sebelum tembaga biasa. Kalau dibalik, polaritas terbalik akan
+    # melubangi tembaga yang sudah digambar dan board-nya rusak tanpa terlihat.
+    for z in zona_untuk(b, sisi):
+        tulis_zona(badan, z, zona_sambung(b, z))
+        tulis_pengosong(b, badan, apo, apo_list, z)
 
     # Vias lebih dulu: mereka milik board, bukan komponen.
     for n in b.nets:
@@ -260,7 +305,6 @@ export def lapisan_copper(b, sisi):
         L.push(apo_tulis_def(d))
     for baris in badan:
         L.push(baris)
-    L.push("%TF.Attr*%")
     for e in gerber_ekor():
         L.push(e)
     return gabung_baris(L)

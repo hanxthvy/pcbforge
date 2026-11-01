@@ -12,6 +12,7 @@
 from "./board.hys" import board_salin, ref_berikutnya, cari_part, cari_pad, net_pin_tambah, net_cari
 from "./lib.hys" import lib_ada, lib_get
 from "./drc.hys" import periksa
+from "./zone.hys" import zona_tambah, zona_hapus
 from "./units.hys" import clamp
 
 

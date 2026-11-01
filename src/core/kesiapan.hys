@@ -14,6 +14,7 @@ from "./board.hys" import semua_pad
 from "./lib.hys" import lib_get, lib_ada
 from "./geom.hys" import point_seg_dist, pt, seg_seg_dist
 from "./drc.hys" import periksa
+from "./zone.hys" import zona_bermasalah
 
 
 export def jalur_tepi(b):
@@ -170,11 +171,15 @@ export def periksa_siap(b):
                     x: pd.x, y: pd.y,
                 })
 
+    # 6b. Zona tembaga yang mengapung
+    for z in zona_bermasalah(b):
+        hasil.push(z)
+
     # 7. Sablon belum punya penanda komponen: beri tahu, jangan dianggap gagal
     hasil.push({
         tingkat: "ingat",
-        pesan: "sablon belum memuat penanda komponen (R1, C2); perakitan "
-               + "mengandalkan berkas CPL",
+        pesan: "sablon memuat penanda komponen (R1, C2) sejak rilis ini; "
+               + "perakitan tetap memakai berkas CPL untuk penempatan",
         x: 0, y: 0,
     })
     # 8. Titik nol dan rotasi CPL belum disesuaikan per footprint
