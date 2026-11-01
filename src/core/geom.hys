@@ -1,0 +1,148 @@
+# [xihanzu-NR]
+# Geometri dasar untuk DRC dan Gerber. Semua satuan milimeter.
+# Bentuk yang dipakai hanya dua: titik dan ruas garis. Semua tembaga pada akhirnya
+# jadi kumpulan ruas (trace) atau persegi/lingkaran (pad), jadi tidak perlu bentuk
+# yang lebih rumit.
+
+import "math" as math
+
+
+export def pt(x, y):
+    return { x: x, y: y }
+
+
+export def pt_cmp(a, b, eps):
+    return Math.abs(a.x - b.x) <= eps and Math.abs(a.y - b.y) <= eps
+
+
+export def dist2(a, b):
+    dx = a.x - b.x
+    dy = a.y - b.y
+    return dx * dx + dy * dy
+
+
+export def dist(a, b):
+    return math.sqrt(dist2(a, b))
+
+
+export def seg_len(s):
+    return dist(s.a, s.b)
+
+
+export def seg_dir(s):
+    # Vektor satuan arah ruas. Ruas berpanjang nol mengembalikan (0,0).
+    dx = s.b.x - s.a.x
+    dy = s.b.y - s.a.y
+    n = math.sqrt(dx * dx + dy * dy)
+    if n == 0:
+        return pt(0, 0)
+    return pt(dx / n, dy / n)
+
+
+export def seg_normal(s):
+    d = seg_dir(s)
+    return pt(-d.y, d.x)
+
+
+export def point_seg_dist2(p, s):
+    # Kuadrat jarak titik ke ruas garis (bukan ke garis tak terhingga).
+    ax = s.a.x
+    ay = s.a.y
+    vx = s.b.x - ax
+    vy = s.b.y - ay
+    wx = p.x - ax
+    wy = p.y - ay
+    L = vx * vx + vy * vy
+    if L == 0:
+        return wx * wx + wy * wy
+    t = (wx * vx + wy * vy) / L
+    if t < 0:
+        t = 0
+    elif t > 1:
+        t = 1
+    dx = wx - t * vx
+    dy = wy - t * vy
+    return dx * dx + dy * dy
+
+
+export def point_seg_dist(p, s):
+    return math.sqrt(point_seg_dist2(p, s))
+
+
+export def seg_seg_dist2(s1, s2):
+    # Jarak terkecil antara dua ruas. Kalau berpotongan, hasilnya 0.
+    if seg_intersect(s1, s2):
+        return 0
+    d = point_seg_dist2(s1.a, s2)
+    d2 = point_seg_dist2(s1.b, s2)
+    if d2 < d:
+        d = d2
+    d2 = point_seg_dist2(s2.a, s1)
+    if d2 < d:
+        d = d2
+    d2 = point_seg_dist2(s2.b, s1)
+    if d2 < d:
+        d = d2
+    return d
+
+
+export def cross2(ox, oy, ax, ay, bx, by):
+    return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox)
+
+
+export def seg_intersect(s1, s2):
+    d1 = cross2(s2.a.x, s2.a.y, s2.b.x, s2.b.y, s1.a.x, s1.a.y)
+    d2 = cross2(s2.a.x, s2.a.y, s2.b.x, s2.b.y, s1.b.x, s1.b.y)
+    d3 = cross2(s1.a.x, s1.a.y, s1.b.x, s1.b.y, s2.a.x, s2.a.y)
+    d4 = cross2(s1.a.x, s1.a.y, s1.b.x, s1.b.y, s2.b.x, s2.b.y)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)):
+        return true
+    return false
+
+
+export def seg_seg_dist(s1, s2):
+    return math.sqrt(seg_seg_dist2(s1, s2))
+
+
+export def bbox_add(b, x, y):
+    if x < b.minx:
+        b.minx = x
+    if y < b.miny:
+        b.miny = y
+    if x > b.maxx:
+        b.maxx = x
+    if y > b.maxy:
+        b.maxy = y
+    return b
+
+
+export def bbox_new():
+    return { minx: 0, miny: 0, maxx: 0, maxy: 0, kosong: true }
+
+
+export def bbox_of_pts(pts):
+    b = bbox_new()
+    for p in pts:
+        if b.kosong:
+            b.minx = p.x
+            b.maxx = p.x
+            b.miny = p.y
+            b.maxy = p.y
+            b.kosong = false
+        else:
+            bbox_add(b, p.x, p.y)
+    return b
+
+
+export def path_segments(pts):
+    # Mengubah daftar titik jadi daftar ruas. Dipakai berulang oleh DRC dan Gerber.
+    out = []
+    i = 0
+    while i < pts.length - 1:
+        out.push({ a: pts[i], b: pts[i + 1] })
+        i += 1
+    return out
+
+
+export def seg_endpoints(s):
+    return [s.a, s.b]

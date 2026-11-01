@@ -1,0 +1,77 @@
+# [xihanzu-NR]
+# Satuan. Di dalam mesin, SEMUA panjang dalam milimeter.
+# Gerber butuh inci untuk mode inci, jadi konversinya ada di sini, satu tempat.
+
+MM_PER_INCH = 25.4
+MIL_PER_MM = 1000 / MM_PER_INCH
+
+
+export def mm_to_inch(mm):
+    return mm / MM_PER_INCH
+
+
+export def inch_to_mm(inch):
+    return inch * MM_PER_INCH
+
+
+export def mil_to_mm(mil):
+    return mil / MIL_PER_MM
+
+
+export def mm_to_mil(mm):
+    return mm * MIL_PER_MM
+
+
+export def bulat(v, desimal):
+    # Menggantikan round(v, desimal) bawaan Python. Bentuk itu memicu helper runtime
+    # hydra, dan mesin inti dijaga bebas helper supaya bisa diuji di Node polos.
+    f = Math.pow(10, desimal)
+    return Math.round(v * f) / f
+
+
+export def fmt_mm(v):
+    # Enam desimal cukup untuk 0.000001 mm, jauh di bawah resolusi pabrik.
+    return bulat(v, 6)
+
+
+export def fmt(v, digits):
+    # Format angka dengan jumlah desimal tetap, tanpa notasi eksponen.
+    return v.toFixed(digits)
+
+
+export def clamp(v, lo, hi):
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+
+export def nearly(a, b, eps):
+    return Math.abs(a - b) <= eps
+
+
+export def gabung_baris(L):
+    # Menggabungkan daftar baris jadi satu teks berakhiran baris baru.
+    #
+    # Ditulis eksplisit, bukan `"".join(L)` atau `L.join()`. Keduanya memicu helper
+    # runtime hydra (`join`), dan runtime itu mengimpor React di tingkat atas, jadi
+    # mesin inti akan berhenti bisa diuji tanpa browser. Gerbang di tools/core.sh
+    # menolak hasil kompilasi yang menyentuh runtime, dan inilah cara menghindarinya.
+    out = ""
+    for x in L:
+        out = out + x + "\n"
+    return out
+
+
+export def gabung_daftar(L, pemisah):
+    # Menggabungkan daftar teks dengan pemisah, tanpa `Array.join`. Bentuk itu memicu
+    # helper runtime hydra, dan mesin inti dijaga bebas helper.
+    out = ""
+    i = 0
+    while i < L.length:
+        if i > 0:
+            out = out + pemisah
+        out = out + L[i]
+        i += 1
+    return out
