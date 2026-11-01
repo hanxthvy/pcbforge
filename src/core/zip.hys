@@ -1,0 +1,222 @@
+# [xihanzu-NR]
+# Pengemas ZIP. Satu berkas, bukan sepuluh.
+#
+# Kenapa ini ada: pabrik seperti JLCPCB meminta SATU unggahan berisi seluruh berkas
+# Gerber. Sebelumnya halaman mengunduh sepuluh berkas terpisah, dan itu bukan sekadar
+# kurang rapi: browser memblokir unduhan beruntun, paling parah di ponsel, sehingga
+# berkas yang diterima pengguna bisa tinggal separuh tanpa satu pun peringatan.
+#
+# Metode penyimpanan dipakai apa adanya (store, tanpa pemampatan). Berkas Gerber itu
+# teks dengan banyak pengulangan, jadi deflate bisa menghemat sekitar sepertiga, tapi
+# itu menuntut implementasi deflate sendiri dan risikonya tidak sepadan untuk berkas
+# berukuran puluhan kilobita.
+#
+# CATATAN BAHASA YANG PENTING:
+# Hydra TIDAK punya operator bitwise. `^`, `&`, `|`, `<<`, `>>`, `~` semuanya ditolak
+# lekser, padahal CRC32 hanyalah aritmetika bit. Karena menambah sintaks bahasa bukan
+# bagian dari pekerjaan ini, XOR dihitung secara aritmetika lewat nilai tempat:
+# ambil bit ke-n kedua angka dengan pembagian dan sisa, bandingkan, lalu susun ulang.
+# Untuk berkas berukuran beberapa kilobita ini cukup cepat (puluhan ribu putaran),
+# dan tidak menambah satu pun operator baru ke bahasa.
+
+XOR8 = []
+TABEL_CRC = []
+_siapkan()
+
+# Berkas ZIP menyimpan waktu modifikasi. Dipatok ke satu nilai tetap supaya dua
+# unduhan dari board yang sama menghasilkan berkas yang identik, sehingga bisa
+# dibandingkan byte per byte.
+TANGGAL_ZIP = 0x5921
+WAKTU_ZIP = 0
+
+
+export def _xor_bit(a, b, lebar):
+    # XOR aritmetika untuk `lebar` bit. Bit ke-n diambil dengan pembagian dan sisa.
+    hasil = 0
+    p = 1
+    k = 0
+    while k < lebar:
+        ba = Math.floor(a / p) % 2
+        bb = Math.floor(b / p) % 2
+        if ba != bb:
+            hasil += p
+        p = p * 2
+        k += 1
+    return hasil
+
+
+export def _siapkan():
+    # Tabel XOR untuk dua byte, 256x256, disimpan rata. Dibuat sekali saat modul
+    # dimuat, jadi perhitungan CRC per byte tinggal melihat tabel, bukan mengulang
+    # aritmetika bit.
+    i = 0
+    while i < 256:
+        j = 0
+        while j < 256:
+            XOR8.push(_xor_bit(i, j, 8))
+            j += 1
+        i += 1
+
+    # Tabel CRC32 untuk polinom 0xEDB88320, standar yang dipakai ZIP.
+    i = 0
+    while i < 256:
+        c = i
+        k = 0
+        while k < 8:
+            if c % 2 == 1:
+                c = _xor_bit(0xEDB88320, Math.floor(c / 2), 32)
+            else:
+                c = Math.floor(c / 2)
+            k += 1
+        TABEL_CRC.push(c)
+        i += 1
+
+
+export def xor8(a, b):
+    return XOR8[a * 256 + b]
+
+
+export def xor32(a, b):
+    # XOR 32 bit lewat empat byte, memakai tabel. Cepat dan tanpa operator bitwise.
+    hasil = 0
+    p = 1
+    k = 0
+    while k < 4:
+        ba = Math.floor(a / p) % 256
+        bb = Math.floor(b / p) % 256
+        hasil += xor8(ba, bb) * p
+        p = p * 256
+        k += 1
+    return hasil
+
+
+export def crc32(byte_arr):
+    c = 0xFFFFFFFF
+    i = 0
+    while i < byte_arr.length:
+        rendah = xor8(c % 256, byte_arr[i])
+        c = xor32(TABEL_CRC[rendah], Math.floor(c / 256))
+        i += 1
+    return xor32(c, 0xFFFFFFFF)
+
+
+export def ke_byte(teks):
+    # Teks jadi byte UTF-8. TextEncoder ada di browser maupun Node, jadi mesin inti
+    # tidak perlu menyandikan sendiri.
+    enc = new TextEncoder()
+    return enc.encode(teks)
+
+
+export def byte_nama(nama):
+    # Nama berkas dalam ZIP memakai byte ASCII, bukan UTF-8, karena semua namanya
+    # memang ASCII.
+    out = []
+    i = 0
+    while i < nama.length:
+        out.push(nama.charCodeAt(i) % 256)
+        i += 1
+    return out
+
+
+export def tulis_u16(b, v):
+    b.push(v % 256)
+    b.push(Math.floor(v / 256) % 256)
+    return b
+
+
+export def tulis_u32(b, v):
+    # Tanpa penjepitan ke 32 bit: tidak bisa ditulis karena Hydra tidak punya
+    # operator bitwise, dan tidak perlu. XOR32 menjaga hasilnya tetap di rentang
+    # 32 bit, dan tiap byte diambil dengan modulo sehingga sisa nilai apa pun
+    # tetap menghasilkan byte yang benar.
+    b.push(v % 256)
+    b.push(Math.floor(v / 256) % 256)
+    b.push(Math.floor(v / 65536) % 256)
+    b.push(Math.floor(v / 16777216) % 256)
+    return b
+
+
+export def tulis_bytes(b, arr):
+    i = 0
+    while i < arr.length:
+        b.push(arr[i])
+        i += 1
+    return b
+
+
+export def zip_buat(daftar):
+    # `daftar` berisi objek {nama, isi}. Mengembalikan Uint8Array satu berkas ZIP.
+    isi_byte = []
+    for f in daftar:
+        isi_byte.push(ke_byte(f.isi))
+
+    out = []
+    pusat = []
+    cacah = daftar.length
+    i = 0
+    while i < cacah:
+        nama = byte_nama(daftar[i].nama)
+        isi = isi_byte[i]
+        c = crc32(isi)
+        offset = out.length
+
+        # --- kepala berkas lokal ---
+        tulis_u32(out, 0x04034B50)
+        tulis_u16(out, 20)        # versi minimum
+        tulis_u16(out, 0x0800)    # nama berkas UTF-8
+        tulis_u16(out, 0)         # metode: store
+        tulis_u16(out, WAKTU_ZIP)
+        tulis_u16(out, TANGGAL_ZIP)
+        tulis_u32(out, c)
+        tulis_u32(out, isi.length)
+        tulis_u32(out, isi.length)
+        tulis_u16(out, nama.length)
+        tulis_u16(out, 0)         # tidak ada data tambahan
+        tulis_bytes(out, nama)
+        tulis_bytes(out, isi)
+
+        # --- catatan untuk direktori pusat ---
+        rec = []
+        tulis_u32(rec, 0x02014B50)
+        tulis_u16(rec, 20)        # versi pembuat
+        tulis_u16(rec, 20)        # versi minimum
+        tulis_u16(rec, 0x0800)
+        tulis_u16(rec, 0)
+        tulis_u16(rec, WAKTU_ZIP)
+        tulis_u16(rec, TANGGAL_ZIP)
+        tulis_u32(rec, c)
+        tulis_u32(rec, isi.length)
+        tulis_u32(rec, isi.length)
+        tulis_u16(rec, nama.length)
+        tulis_u16(rec, 0)
+        tulis_u16(rec, 0)         # tidak ada komentar
+        tulis_u16(rec, 0)         # nomor disk
+        tulis_u16(rec, 0)         # atribut internal
+        tulis_u32(rec, 0)         # atribut eksternal
+        tulis_u32(rec, offset)
+        tulis_bytes(rec, nama)
+        pusat.push(rec)
+        i += 1
+
+    awal_pusat = out.length
+    for rec in pusat:
+        tulis_bytes(out, rec)
+
+    # --- akhir direktori pusat ---
+    #
+    # Ukuran direktori pusat dihitung SEBELUM kepala EOCD ditulis. Menulis
+    # `out.length - awal_pusat` langsung sebagai argumen salah: pada saat argumen itu
+    # dievaluasi, tanda tangan 4 byte sudah masuk ke `out`, jadi angkanya kelebihan 4
+    # dan berkasnya ditolak pembaca ZIP mana pun ("reported length of central directory
+    # is 4 bytes too long"). Ini berlaku di JavaScript biasa juga, bukan khas Hydra.
+    ukuran_pusat = out.length - awal_pusat
+    tulis_u32(out, 0x06054B50)
+    tulis_u16(out, 0)
+    tulis_u16(out, 0)
+    tulis_u16(out, cacah)
+    tulis_u16(out, cacah)
+    tulis_u32(out, ukuran_pusat)
+    tulis_u32(out, awal_pusat)
+    tulis_u16(out, 0)
+
+    return new Uint8Array(out)

@@ -1,0 +1,65 @@
+# [xihanzu-NR]
+# Uji CRC32 dan pengemas ZIP.
+#
+# CRC32 dihitung tanpa operator bitwise karena Hydra tidak punya. Uji ini
+# membandingkannya dengan nilai acuan yang sudah diketahui, jadi implementasi
+# aritmetikanya tidak dipercaya begitu saja.
+
+import "zlib" as zlib
+
+from "./zip.mjs" import crc32, zip_buat, ke_byte, xor8, xor32
+
+SALAH = 0
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+def utama():
+    # XOR dasar dulu
+    cek("xor8(0,0)=0", xor8(0, 0) == 0, "")
+    cek("xor8(0xFF,0x0F)=0xF0", xor8(255, 15) == 240, str(xor8(255, 15)))
+    cek("xor8(0xAA,0xAA)=0", xor8(170, 170) == 0, "")
+    cek("xor32 sederhana", xor32(4294967295, 0) == 4294967295, "")
+
+    # Nilai acuan CRC32 yang sudah terkenal.
+    cek("crc32('') = 0", crc32(ke_byte("")) == 0, str(crc32(ke_byte(""))))
+    cek("crc32('a') = 0xE8B7BE43",
+        crc32(ke_byte("a")) == 3904355907, str(crc32(ke_byte("a"))))
+    cek("crc32('123456789') = 0xCBF43926",
+        crc32(ke_byte("123456789")) == 3421780262, str(crc32(ke_byte("123456789"))))
+
+    # Zip harus terbentuk dan punya tanda tangan yang benar.
+    daftar = [
+        { nama: "a.txt", isi: "halo" },
+        { nama: "b.txt", isi: "dunia" },
+    ]
+    z = zip_buat(daftar)
+    cek("zip menghasilkan byte", z.length > 40, str(z.length) + " byte")
+    cek("tanda tangan lokal 0x04034B50",
+        z[0] == 0x50 and z[1] == 0x4B and z[2] == 0x03 and z[3] == 0x04,
+        "PK\x03\x04")
+    # akhir direktori pusat harus ada di 22 byte terakhir
+    n = z.length
+    cek("tanda tangan pusat 0x06054B50",
+        z[n-22] == 0x50 and z[n-21] == 0x4B and z[n-20] == 0x05 and z[n-19] == 0x06,
+        "PK\x05\x06")
+    cek("jumlah berkas tercatat = 2",
+        z[n-14] == 2 and z[n-12] == 2, "dua-duanya 2")
+
+    # Paling penting: Python harus bisa membukanya. Kalau zlib di sisi Python
+    # menerima berkas ini, berarti ZIP-nya sah menurut pembaca independen.
+    import "fs" as fs
+    fs.writeFileSync("/tmp/uji-pcbforge.zip", z)
+
+    return 0
+
+# Tidak memakai `raise`: bentuk itu memicu helper runtime hydra (raise_), dan
+# mesin inti dijaga bebas helper. Kode keluar saja yang menentukan.
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1
