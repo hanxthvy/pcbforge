@@ -20,6 +20,7 @@
 # Untuk sudut 45 derajat, yang dipakai semua board praktis, segmen lurus sudah persis.
 
 from "./units.hys" import mm_to_inch, fmt, fmt_mm, gabung_baris
+from "./text.hys" import goresan_teks, tinggi_untuk, lebar_teks
 from "./geom.hys" import path_segments
 from "./board.hys" import semua_pad
 from "./lib.hys" import lib_get, lib_ada
@@ -196,6 +197,11 @@ export def titik_outline(outline):
 
 # ---------- satu lapisan penuh ----------
 
+export def tengah_teks(teks, tinggi):
+    # Setengah lebar teks, untuk memusatkannya pada sumbu X komponen.
+    return lebar_teks(teks, tinggi, 0.15) / 2
+
+
 export def tr_pt(part, x, y):
     # Pindahkan titik dari koordinat komponen ke koordinat board, ikut rotasi dan
     # sisi pemasangan. Sisi bawah dicerminkan mendatar, sama seperti semua_pad().
@@ -327,12 +333,12 @@ export def lapisan_paste(b, sisi):
 
 
 export def lapisan_silk(b, sisi):
-    # Sablon: garis luar komponen dari pustaka, dipindah ke koordinat board.
+    # Sablon: garis luar komponen dari pustaka, ditambah penanda komponen.
     #
-    # Yang belum ada: teks penanda (R1, C2, ...). Gerber tidak punya font, jadi teks
-    # harus digambar sebagai goresan dari tabel bentuk huruf, dan itu pekerjaan
-    # tersendiri. Untuk perakitan, penempatan komponen dipandu berkas CPL, bukan
-    # sablon. Jadi sablon tetap berguna sekarang, dan penanda menyusul.
+    # Penanda digambar sebagai goresan huruf (lihat core/text.hys). Gerber tidak punya
+    # teks, jadi ini satu-satunya cara. Tanpa penanda, board hanya bisa dirakit dengan
+    # membaca berkas CPL, dan orang yang memegang boardnya tidak tahu komponen mana di
+    # posisi mana. Setiap alat PCB menaruh penanda ini di sablon.
     L = []
     apo = apo_baru()
     apo_list = []
@@ -361,6 +367,21 @@ export def lapisan_silk(b, sisi):
                     pts.push(tr_pt(p, cx + r * Math.cos(ang), cy + r * Math.sin(ang)))
                     k += 1
                 tulis_jalur(badan, apo, apo_list, pts, lebar)
+
+        # Penanda komponen: ref di atas, nilai di bawah kalau ada nilainya.
+        #
+        # Ukurannya mengikuti lebar komponen, jadi penanda di 0402 lebih kecil dari di
+        # TO220. Untuk komponen sempit (SOT23 ke bawah), nilai dilewati: dua baris teks
+        # di lebar 1.4 mm jadi tidak terbaca dan justru mengotori sablon.
+        tinggi = tinggi_untuk(lb.w, p.ref, 0.15)
+        goresan = goresan_teks(p.ref, p.x - tengah_teks(p.ref, tinggi), p.y - lb.h / 2 - 0.35, tinggi, 0.15)
+        for j in goresan:
+            tulis_jalur(badan, apo, apo_list, j, 0.12)
+        if p.nilai != undefined and p.nilai != "" and lb.w >= 2 and p.nilai.length <= 8:
+            tn = tinggi_untuk(lb.w, str(p.nilai), 0.15)
+            gn = goresan_teks(str(p.nilai), p.x - tengah_teks(str(p.nilai), tn), p.y + lb.h / 2 + 0.25 + tn, tn, 0.15)
+            for j in gn:
+                tulis_jalur(badan, apo, apo_list, j, 0.12)
     fungsi = "Legend,Top"
     if sisi == "B":
         fungsi = "Legend,Bot"

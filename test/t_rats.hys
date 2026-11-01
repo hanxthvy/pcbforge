@@ -1,0 +1,9 @@
+# [xihanzu-NR]
+from "./conn.mjs" import ratsnest, uji
+from "./contoh.mjs" import board_contoh_siap
+b = board_contoh_siap()
+r = ratsnest(b)
+print("garis bantu:", r.length)
+for g in r:
+    print("  ", g.net, Math.round(g.x1), Math.round(g.y1), "->", Math.round(g.x2), Math.round(g.y2), "jauh", Math.round(g.jauh*10)/10)
+print("jalur menggantung:", uji(b).length)

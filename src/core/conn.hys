@@ -35,6 +35,118 @@ export def menyentuh(titik, item):
                      (titik.y - item.y) * (titik.y - item.y)) <= item.r + EPS
 
 
+export def tersambung_lewat(b, nama_net, a, c):
+    # Dua titik dianggap tersambung kalau letaknya berimpit, atau ada jalur net ini
+    # yang menyentuh keduanya.
+    if Math.abs(a.x - c.x) < 0.02 and Math.abs(a.y - c.y) < 0.02:
+        return true
+    for n in b.nets:
+        if n.nama != nama_net:
+            continue
+        for t in n.trace:
+            if titik_di_jalur(a, t) and titik_di_jalur(c, t):
+                return true
+    return false
+
+
+export def sebar(b, nama_net, titik, mulai, nomor):
+    # Tandai semua titik yang tersambung ke `titik[mulai]` dengan nomor kelompok.
+    # Penelusuran sederhana: ulang sampai tidak ada yang berubah lagi.
+    titik[mulai].kl = nomor
+    berubah = true
+    while berubah:
+        berubah = false
+        i = 0
+        while i < titik.length:
+            if titik[i].kl != nomor:
+                j = 0
+                while j < titik.length:
+                    if titik[j].kl == nomor:
+                        if tersambung_lewat(b, nama_net, titik[i], titik[j]):
+                            titik[i].kl = nomor
+                            berubah = true
+                    j += 1
+            i += 1
+
+
+export def ratsnest(b):
+    # Garis bantu untuk sambungan yang BELUM dibuat. Ini inti alat PCB: tanpa ini orang
+    # tidak tahu apa saja yang masih harus dirutekan.
+    #
+    # Yang digambar adalah POHON PENGHUBUNG MINIMUM, bukan semua pasangan. Alat PCB
+    # profesional berperilaku begitu: untuk net dengan n kelompok tembaga, muncul
+    # tepat n-1 garis. Menggambar semua pasangan menghasilkan puluhan garis bersilangan
+    # yang justru menyembunyikan mana yang penting.
+    #
+    # Cara kerjanya: kelompokkan titik sambung yang sudah tersambung jalur, lalu
+    # berulang kali sambungkan dua kelompok TERDEKAT sampai tersisa satu kelompok.
+    out = []
+    for n in b.nets:
+        titik = []
+        for p in n.pin:
+            pd = cari_pad(b, p.ref, p.pad)
+            if pd != null:
+                titik.push({ x: pd.x, y: pd.y, kl: -1, siapa: p.ref + "." + str(p.pad) })
+        for v in n.via:
+            titik.push({ x: v.x, y: v.y, kl: -1, siapa: "via" })
+        for t in n.trace:
+            titik.push({ x: t.pts[0].x, y: t.pts[0].y, kl: -1, siapa: "ujung" })
+            titik.push({ x: t.pts[t.pts.length - 1].x, y: t.pts[t.pts.length - 1].y, kl: -1, siapa: "ujung" })
+        if titik.length < 2:
+            continue
+
+        # Beri nomor kelompok. Dua titik masuk kelompok sama kalau letaknya berimpit
+        # atau tersambung lewat jalur net ini.
+        berikut = 0
+        i = 0
+        while i < titik.length:
+            if titik[i].kl < 0:
+                sebar(b, n.nama, titik, i, berikut)
+                berikut += 1
+            i += 1
+
+        # Sambungkan kelompok terdekat berulang kali sampai tersisa satu.
+        while berikut > 1:
+            d_min = -1
+            a_min = -1
+            c_min = -1
+            a = 0
+            while a < titik.length:
+                c = a + 1
+                while c < titik.length:
+                    if titik[a].kl != titik[c].kl:
+                        d = Math.sqrt((titik[a].x - titik[c].x) * (titik[a].x - titik[c].x)
+                                      + (titik[a].y - titik[c].y) * (titik[a].y - titik[c].y))
+                        if d_min < 0 or d < d_min:
+                            d_min = d
+                            a_min = a
+                            c_min = c
+                    c += 1
+                a += 1
+            if a_min < 0:
+                break
+            out.push({
+                x1: titik[a_min].x, y1: titik[a_min].y,
+                x2: titik[c_min].x, y2: titik[c_min].y,
+                net: n.nama, jauh: d_min,
+            })
+            lama = titik[c_min].kl
+            k = 0
+            while k < titik.length:
+                if titik[k].kl == lama:
+                    titik[k].kl = titik[a_min].kl
+                k += 1
+            berikut -= 1
+    return out
+
+
+export def titik_di_jalur(p, t):
+    for q in t.pts:
+        if Math.abs(p.x - q.x) < 0.02 and Math.abs(p.y - q.y) < 0.02:
+            return true
+    return false
+
+
 export def uji(b):
     masalah = []
     for n in b.nets:

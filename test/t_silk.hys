@@ -1,0 +1,92 @@
+# [xihanzu-NR]
+# Uji penanda sablon dan font goresan.
+#
+# Sablon tanpa penanda tetap bisa dirakit (berkas CPL yang memandu), tapi orang yang
+# memegang boardnya tidak tahu komponen mana di posisi mana. Uji ini memastikan
+# penanda benar-benar keluar di berkas Gerber, dan bahwa hurufnya terbentuk.
+
+from "./font.mjs" import FONT, lebar_huruf, tinggi_huruf
+from "./text.mjs" import goresan_teks, lebar_teks, tinggi_untuk
+from "./gerber.mjs" import lapisan_silk
+from "./contoh.mjs" import board_contoh_siap
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def utama():
+    # font
+    cek("font punya A-Z", FONT["A"] != undefined and FONT["Z"] != undefined, "")
+    cek("font punya 0-9", FONT["0"] != undefined and FONT["9"] != undefined, "")
+    cek("font punya tanda", FONT["-"] != undefined and FONT["."] != undefined, "")
+    cek("spasi tidak punya goresan", FONT[" "].length == 0, str(FONT[" "].length))
+
+    # tiap titik harus di dalam sel 0..4 x 0..6.
+    # Daftar hurufnya ditulis dari font.hys lewat lebar/tinggi, bukan Object.keys():
+    # bentuk itu memicu helper runtime hydra (dict_keys), dan mesin inti dijaga bebas
+    # helper supaya bisa diuji di Node polos.
+    luar = 0
+    huruf = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. "
+    i = 0
+    while i < huruf.length:
+        bentuk = FONT[huruf[i]]
+        if bentuk != undefined:
+            for s in bentuk:
+                for p in s:
+                    if p[0] < 0 or p[0] > lebar_huruf() or p[1] < 0 or p[1] > tinggi_huruf():
+                        luar = luar + 1
+        i += 1
+    cek("semua titik di dalam sel", luar == 0, str(luar) + " di luar")
+
+    # goresan teks
+    g = goresan_teks("R1", 10, 10, 1.2, 0.15)
+    cek("teks menghasilkan goresan", g.length > 0, str(g.length) + " goresan")
+    cek("tiap goresan minimal dua titik", semua_dua(g), "")
+    # lebar teks harus tumbuh dengan panjang teks
+    w1 = lebar_teks("R1", 1.2, 0.15)
+    w2 = lebar_teks("R12", 1.2, 0.15)
+    cek("teks lebih panjang lebih lebar", w2 > w1, str(w1) + " -> " + str(w2))
+    # huruf kecil jadi besar
+    a = goresan_teks("r1", 0, 0, 1.2, 0.15)
+    b = goresan_teks("R1", 0, 0, 1.2, 0.15)
+    cek("huruf kecil disamakan dengan besar", a.length == b.length, str(a.length) + " vs " + str(b.length))
+
+    # tinggi dibatasi akal
+    cek("tinggi terlalu kecil dibatasi", tinggi_untuk(0.4, "R1", 0.15) >= 0.6, str(tinggi_untuk(0.4, "R1", 0.15)))
+    cek("tinggi terlalu besar dibatasi", tinggi_untuk(200, "R1", 0.15) <= 3, str(tinggi_untuk(200, "R1", 0.15)))
+
+    # sablon: harus memuat penanda
+    b = board_contoh_siap()
+    silk = lapisan_silk(b, "F")
+    goresan = (silk.split("D01*").length - 1)
+    cek("sablon punya banyak goresan", goresan > 60, str(goresan) + " goresan")
+    cek("sablon punya fungsi lapisan", silk.indexOf("Legend,Top") > 0, "")
+    # penanda harus menambah goresan yang jauh lebih banyak dari garis luar saja
+    cek("goresan cukup untuk huruf", goresan > 100, str(goresan))
+
+    # sablon bawah harus kosong: semua komponen di sisi atas
+    silkB = lapisan_silk(b, "B")
+    gB = (silkB.split("D01*").length - 1)
+    cek("sablon bawah kosong", gB == 0, str(gB) + " goresan")
+
+    return 0
+
+
+def semua_dua(g):
+    for s in g:
+        if s.length < 2:
+            return false
+    return true
+
+
+hasil = utama()
+print("--- salah=" + str(SALAH))
+if SALAH > 0:
+    process.exitCode = 1
