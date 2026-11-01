@@ -1,9 +1,11 @@
 # [xihanzu-NR]
 # Halaman utama PCBForge.
 #
-# Untuk sekarang tujuannya pembuktian: seluruh rantai dari mesin inti sampai ke
-# browser, dan ekspor Gerber yang bisa diunduh dari halaman ini tanpa perantara.
-# Editor kanvas menyusul di atas fondasi ini.
+# Tujuannya sekarang: satu halaman yang benar-benar bisa dipakai sampai ke titik
+# "board siap dipesan". Editor kanvas menyusul.
+#
+# Prinsip tata letak: satu kolom di ponsel, dua kolom di layar lebar. Tidak ada lebar
+# tetap, tidak ada elemen yang hanya bisa disentuh dengan kursor.
 
 import "./app.css"
 
@@ -11,41 +13,90 @@ from "react" import useState, useEffect, useMemo, useRef
 from "react-dom/client" import createRoot
 
 from "./core/lib.hys" import lib_names, lib_get
-from "./core/board.hys" import ringkas
+from "./core/board.hys" import semua_pad
 from "./core/contoh.hys" import board_contoh_siap
-from "./core/drc.hys" import periksa, ringkas_drc
+from "./core/drc.hys" import periksa
+from "./core/kesiapan.hys" import periksa_siap, ringkas_siap
 from "./core/gerber.hys" import gerber_semua
+from "./core/kit.hys" import bom, cpl, panduan
+from "./core/zip.hys" import zip_buat
 
-# ---------- gambar kanvas 2D ----------
+# ---------- paket cetak ----------
 
-def gambar_board(b, kanvas, skala):
-    # Menggambar board di kanvas 2D. Hanya untuk melihat; semua angka yang keluar
-    # ke pabrik tetap dari mesin inti.
+def paket(b):
+    # Seluruh isi satu paket: 10 lapisan Gerber, BOM, CPL, dan panduan singkat.
+    daftar = []
+    for f in gerber_semua(b):
+        daftar.push(f)
+    daftar.push({ nama: b.meta.nama + "-BOM.csv", isi: bom(b, {}) })
+    daftar.push({ nama: b.meta.nama + "-CPL.csv", isi: cpl(b) })
+    daftar.push({ nama: b.meta.nama + "-BACA.txt", isi: panduan(b) })
+    return daftar
+
+
+def unduh_paket(b):
+    # SATU berkas. Sebelumnya di sini ada sepuluh unduhan beruntun, dan itu bukan
+    # sekadar kurang rapi: browser memblokir unduhan beruntun, paling parah di ponsel,
+    # jadi berkas yang diterima pengguna bisa tinggal separuh tanpa peringatan apa pun.
+    # Pabrik juga memang meminta satu unggahan berisi seluruh berkas.
+    daftar = paket(b)
+    z = zip_buat(daftar)
+    blob = new Blob([z])
+    url = URL.createObjectURL(blob)
+    a = document.createElement("a")
+    a.href = url
+    a.download = b.meta.nama + "-gerber.zip"
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    return daftar.length
+
+
+# ---------- gambar papan ----------
+
+def gambar_board(b, kanvas):
     if kanvas == null:
         return
+    # Gambar ulang mengikuti lebar wadah, jadi tajam di ponsel maupun desktop dan
+    # ikut menyesuaikan saat layar diputar.
+    wadah = kanvas.parentElement
+    if wadah == null:
+        return
+    lebarCss = wadah.clientWidth
+    if lebarCss <= 0:
+        return
+    rasio = Math.min(3, window.devicePixelRatio or 1)
+    # Rasio bidang board, dengan margin
+    rw = b.outline.lebar + 8
+    rh = b.outline.tinggi + 8
+    tinggiCss = Math.round(lebarCss * rh / rw)
+    kanvas.width = Math.round(lebarCss * rasio)
+    kanvas.height = Math.round(tinggiCss * rasio)
+    kanvas.style.height = tinggiCss + "px"
+
     ctx = kanvas.getContext("2d")
-    lebar = kanvas.width
-    tinggi = kanvas.height
-    ctx.clearRect(0, 0, lebar, tinggi)
-    ctx.save()
-    ctx.scale(skala, skala)
-    ctx.translate(6, 6)
+    skala = kanvas.width / rw
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, kanvas.width, kanvas.height)
+    ctx.setTransform(skala, 0, 0, skala, skala * 4, skala * 4)
 
     # badan board
-    ctx.fillStyle = "#0b3d2c"
+    ctx.fillStyle = "#0d3b2a"
     ctx.beginPath()
     ctx.rect(0, 0, b.outline.lebar, b.outline.tinggi)
     ctx.fill()
-    ctx.strokeStyle = "#7dd3a0"
+    ctx.strokeStyle = "#5fd39a"
     ctx.lineWidth = 0.3
     ctx.stroke()
 
     # jalur
     for n in b.nets:
         for t in n.trace:
-            ctx.strokeStyle = "#caa14a"
+            ctx.strokeStyle = "#e8b55c"
+            ctx.lineCap = "round"
             if t.layer == "B":
-                ctx.strokeStyle = "#4a7fca"
+                ctx.strokeStyle = "#5b8dee"
             ctx.lineWidth = t.lebar
             ctx.beginPath()
             i = 0
@@ -59,26 +110,25 @@ def gambar_board(b, kanvas, skala):
 
     # pad dan badan komponen
     for p in b.parts:
-        if lib_get(p.lib) == null:
-            continue
         lb = lib_get(p.lib)
-        for pd in semua_pad_komponen(p):
-            ctx.fillStyle = "#d8c07a"
+        if lb == null:
+            continue
+        for pd in semua_pad(p, lb):
+            ctx.fillStyle = "#f0d78c"
             ctx.beginPath()
             ctx.arc(pd.x, pd.y, Math.max(pd.w, pd.h) / 2, 0, Math.PI * 2)
             ctx.fill()
-        # garis luar komponen
-        ctx.strokeStyle = "#c9d1e0"
-        ctx.lineWidth = 0.15
+        ctx.strokeStyle = "rgba(226,232,240,0.55)"
+        ctx.lineWidth = 0.16
         ctx.strokeRect(p.x - lb.w / 2, p.y - lb.h / 2, lb.w, lb.h)
-        ctx.fillStyle = "#8b93a7"
-        ctx.font = "1.6px sans-serif"
-        ctx.fillText(p.ref, p.x - lb.w / 2, p.y - lb.h / 2 - 0.8)
+        ctx.fillStyle = "#cbd5e1"
+        ctx.font = "1.7px ui-sans-serif, system-ui, sans-serif"
+        ctx.fillText(p.ref, p.x - lb.w / 2, p.y - lb.h / 2 - 0.9)
 
     # via
     for n in b.nets:
         for v in n.via:
-            ctx.fillStyle = "#9aa7bd"
+            ctx.fillStyle = "#aab4c8"
             ctx.beginPath()
             ctx.arc(v.x, v.y, v.diameter / 2, 0, Math.PI * 2)
             ctx.fill()
@@ -87,41 +137,15 @@ def gambar_board(b, kanvas, skala):
             ctx.arc(v.x, v.y, v.bor / 2, 0, Math.PI * 2)
             ctx.fill()
 
-    ctx.restore()
 
+# ---------- komponen tampilan ----------
 
-def semua_pad_komponen(p):
-    # Semua pad satu komponen, dalam koordinat board.
-    from "./core/board.hys" import semua_pad
-    return semua_pad(p, lib_get(p.lib))
+component Kartu(judul, anak):
+    section(className="kartu"):
+        h2(className="judul"): judul
+        div(className="isi"):
+            slot
 
-
-# ---------- unduh ----------
-
-def unduh_gerber(b):
-    # Membuat kesepuluh berkas lalu mengunduhnya satu per satu.
-    # Ini jalan pintas yang jujur: pengemasan jadi satu zip butuh pustaka zip, dan
-    # itu bisa ditambahkan nanti. Untuk pembuktian, berkasnya nyata dan lengkap.
-    berkas = gerber_semua(b)
-    for f in berkas:
-        # Blob dibuat TANPA objek opsi. Namanya harus `type`, dan `type` kata kunci
-        # Hydra sehingga tidak bisa jadi kunci objek (sama seperti `def`). Menulis
-        # `{ mime: ... }` akan diterima diam-diam oleh Blob dan diabaikan, jadi lebih
-        # jujur tidak menulis opsi sama sekali: berkasnya diunduh apa adanya, dan
-        # nama berkasnya sudah dikenali pabrik dari akhiran .gbr/.drl.
-        blob = new Blob([f.isi])
-        url = URL.createObjectURL(blob)
-        a = document.createElement("a")
-        a.href = url
-        a.download = f.nama
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-    return berkas.length
-
-
-# ---------- komponen ----------
 
 component Baris(nama, nilai):
     div(className="baris"):
@@ -129,75 +153,145 @@ component Baris(nama, nilai):
         span(className="nilai"): nilai
 
 
-component PanelGerber(b):
+component Papan(b):
+    kanvasRef = useRef(null)
+    [besar, setBesar] = useState(false)
+    kanvasBesarRef = useRef(null)
+
+    useEffect(lambda: gambar_board(b, kanvasRef.current), [b])
+    useEffect(lambda: pengamat_ukuran(b, kanvasRef.current), [b])
+
+    # Di ponsel, papan 40 mm pada lebar 366 px bikin tulisan penanda jadi sangat
+    # kecil. Karena itu papan bisa disentuh untuk diperbesar, dan lapisan besarnya
+    # bisa ditutup dengan tombol, sentuhan di luar, atau tombol Escape.
+    # Ditulis sebagai lambda, BUKAN hasil pemanggilannya: useEffect menuntut fungsinya
+    # sendiri sebagai argumen pertama. Menulis  `tutup_dengan_escape(...)`  membuat
+    # React memanggil nilai kembaliannya (undefined saat belum terbuka), dan React
+    # langsung berhenti dengan "e is not a function" di seluruh halaman.
+    useEffect(lambda: tutup_dengan_escape(besar, setBesar), [besar])
+    useEffect(lambda: gambar_board(b, kanvasBesarRef.current), [besar])
+
+    div:
+        div(className="papan-bungkus dapat-disentuh", role="button",
+            tabindex="0", onClick=lambda: setBesar(true),
+            onKeyDown=lambda e: setBesar(true if (e.key == "Enter") else besar)):
+            canvas(ref=kanvasRef, className="papan")
+        p(className="dim kecil petunjuk"):
+            "Sentuh papan untuk memperbesar."
+        div(className="legenda"):
+            span(className="tanda t-atas"): "tembaga atas"
+            span(className="tanda t-bawah"): "tembaga bawah"
+            span(className="tanda t-pad"): "pad"
+            span(className="tanda t-via"): "via"
+        if besar:
+            div(className="selubung", onClick=lambda: setBesar(false)):
+                div(className="sorot", onClick=lambda e: hentikan(e)):
+                    div(className="sorot-kepala"):
+                        span(className="dim kecil"):
+                            f"{b.meta.nama} · {b.outline.lebar} × {b.outline.tinggi} mm"
+                        button(className="tutup", onClick=lambda: setBesar(false)):
+                            "Tutup"
+                    div(className="papan-bungkus"):
+                        canvas(ref=kanvasBesarRef, className="papan")
+
+
+def hentikan(e):
+    # Klik di dalam sorotan tidak boleh menutup lapisannya.
+    e.stopPropagation()
+
+
+def tutup_dengan_escape(besar, setBesar):
+    if besar == false:
+        return
+    def pada_tombol(e):
+        if e.key == "Escape":
+            setBesar(false)
+    document.addEventListener("keydown", pada_tombol)
+    return lambda: document.removeEventListener("keydown", pada_tombol)
+
+
+def pengamat_ukuran(b, kanvas):
+    # Gambar ulang saat wadah berubah lebar: ponsel diputar, jendela diubah.
+    if kanvas == null:
+        return
+    obs = new ResizeObserver(lambda: gambar_board(b, kanvas))
+    obs.observe(kanvas.parentElement)
+    return lambda: obs.disconnect()
+
+
+component TombolGerber(b):
     [pesan, setPesan] = useState("")
-    div(className="kartu"):
-        h2: "Ekspor cetak"
-        p(className="dim"):
-            "Sepuluh berkas siap kirim ke pabrik: 2 tembaga, 2 mask, 2 sablon, "
-        p(className="dim"):
-            "2 pasta, potongan tepi, dan satu berkas bor Excellon."
-        button(onClick=lambda: setPesan(f"{unduh_gerber(b)} berkas diunduh")):
-            "Unduh Gerber"
+    div:
+        button(className="utama", onClick=lambda: setPesan(tandai_unduh(b))):
+            "Unduh berkas cetak"
+        p(className="dim kecil"):
+            "Satu berkas zip: 10 lapisan Gerber, BOM, CPL, dan keterangan. "
         if pesan:
-            p(className="ok"): pesan
+            p(className="ok kecil"): pesan
 
 
-component PanelDRC(b):
-    temuan = periksa(b)
-    div(className="kartu"):
-        h2: "Pemeriksaan aturan"
-        if temuan.length == 0:
-            p(className="ok"): "Bersih. Board ini aman dikirim."
+def tandai_unduh(b):
+    n = unduh_paket(b)
+    return f"{n} berkas dikemas dalam satu zip"
+
+
+component PanelSiap(b):
+    hasil = useMemo(lambda: periksa_siap(b), [b])
+    r = ringkas_siap(hasil)
+    div:
+        if r.gagal == 0:
+            p(className="ok"): "Siap dicetak. Tidak ada masalah yang menghalangi."
         else:
-            p: f"{temuan.length} masalah"
-            for t in temuan:
+            p(className="buruk"): f"{r.gagal} masalah harus diperbaiki dulu"
+        for h in hasil:
+            if h.tingkat == "gagal":
                 div(className="temuan"):
-                    span(className="jenis"): t.jenis
-                    span: t.pesan
-
-
-component PanelKomponen(b):
-    div(className="kartu"):
-        h2: "Komponen"
-        for p in b.parts:
-            Baris(nama=p.ref + " · " + p.lib, nilai=p.nilai)
-
-
-component PanelNet(b):
-    div(className="kartu"):
-        h2: "Net"
-        for n in b.nets:
-            Baris(nama=n.nama, nilai=f"{n.pin.length} pin, {n.trace.length} jalur, {n.via.length} via")
+                    span(className="tanda-gagal"): "gagal"
+                    span: h.pesan
+        for h in hasil:
+            if h.tingkat != "gagal":
+                div(className="temuan"):
+                    span(className="tanda-ingat"): "ingat"
+                    span: h.pesan
 
 
 component App():
     b = useMemo(board_contoh_siap, [])
-    skalaRef = useRef(null)
-    kanvasRef = useRef(null)
-
-    useEffect(lambda: gambar_board(b, kanvasRef.current, 11), [b])
+    temuan = useMemo(lambda: periksa(b), [b])
 
     div(className="shell"):
         header(className="kepala"):
-            h1: "PCBForge"
+            div(className="merek"): "PCBForge"
             p(className="dim"):
-                f"Board contoh {b.outline.lebar} × {b.outline.tinggi} mm, 2 lapis. "
-        div(className="kolom"):
-            div(className="kiri"):
-                div(className="kartu"):
-                    h2: "Papan"
-                    canvas(ref=kanvasRef, width=460, height=290, className="papan")
-                    p(className="dim"):
-                        "Kuning: tembaga atas. Biru: tembaga bawah. Abu: via."
-                PanelGerber(b=b)
-            div(className="kanan"):
-                PanelDRC(b=b)
-                PanelKomponen(b=b)
-                PanelNet(b=b)
+                f"Board contoh {b.outline.lebar} × {b.outline.tinggi} mm, dua lapis, "
+                f"{b.parts.length} komponen, {b.nets.length} net."
+        main(className="kolom"):
+            div(className="kolom-utama"):
+                Kartu(judul="Papan"):
+                    Papan(b=b)
+            div(className="kolom-samping"):
+                Kartu(judul="Ekspor cetak"):
+                    TombolGerber(b=b)
+                Kartu(judul="Kesiapan"):
+                    PanelSiap(b=b)
+                Kartu(judul="Pemeriksaan aturan"):
+                    if temuan.length == 0:
+                        p(className="ok"): "Bersih. Jarak dan lebar jalur aman."
+                    else:
+                        p(className="buruk"): f"{temuan.length} masalah"
+                        for t in temuan:
+                            div(className="temuan"):
+                                span(className="tanda-gagal"): t.jenis
+                                span: t.pesan
+                Kartu(judul="Komponen"):
+                    for p in b.parts:
+                        Baris(nama=p.ref + " · " + p.lib, nilai=p.nilai)
+                Kartu(judul="Net"):
+                    for n in b.nets:
+                        Baris(nama=n.nama, nilai=f"{n.pin.length} pin, {n.trace.length} jalur, {n.via.length} via")
         footer(className="kaki"):
-            p(className="dim"):
-                f"Mesin inti Hydra. {lib_names().length} footprint di pustaka."
+            p(className="dim kecil"):
+                f"Ditulis dengan HydraScript. {lib_names().length} footprint di pustaka."
 
 
 def main():
