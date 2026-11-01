@@ -407,3 +407,7 @@ input.warna {
 }
 .tombol-berkas:hover { border-color: #46536e; background: #212838; }
 .tombol-berkas input { display: none; }
+
+/* Penanda komponen di daftar tidak boleh terpotong dua baris: "P1" sempat jadi "P"
+   dan "1" di baris berbeda karena ruangnya sempit. */
+.baris-tombol .kunci { white-space: nowrap; }

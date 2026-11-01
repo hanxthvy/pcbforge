@@ -9,6 +9,9 @@ dikompilasi dengan benar, yang diperbaiki adalah compilernya, bukan kode di sini
 
 ## Keadaan sekarang
 
+REVIEW: lihat RISET-UI.md untuk daftar lengkap apa yang sudah ada dan apa yang belum,
+dicatat dari dokumentasi KiCad 9, EasyEDA, dan Altium.
+
 Mesin inti selesai dan teruji. Ada satu halaman yang menampilkan board contoh,
 hasil pemeriksaan aturannya, dan tombol yang mengunduh kesepuluh berkas siap cetak.
 Editor kanvas untuk menggambar sendiri belum ada.
