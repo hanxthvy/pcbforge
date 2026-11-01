@@ -73,6 +73,18 @@ sengaja sedikit lebih longgar supaya tidak ada board lolos tepat di batas.
 
 Ruang lingkup lengkap dan yang sengaja **tidak** dikerjakan ada di [BRIEF.md](BRIEF.md).
 
+## Tampilan
+
+Satu kolom di ponsel, dua kolom di layar lebar, tanpa lebar tetap. Ukuran sentuh
+minimum 44px dan ada ruang aman bawah untuk bilah gestur ponsel.
+
+Yang penting di ponsel:
+- tombol **Unduh berkas cetak** menghasilkan SATU berkas zip berisi tiga belas
+  berkas: 10 lapisan Gerber, BOM, CPL, dan keterangan. Sepuluh unduhan beruntun
+  diblokir browser dan bisa menghasilkan berkas separuh tanpa peringatan
+- papan bisa disentuh untuk diperbesar. Bisa ditutup dengan tombol, sentuhan di
+  luar, atau tombol Escape
+
 ## Batas yang diketahui
 
 - Sudut jalur diputus jadi segmen lurus, bukan arc Gerber. Untuk sudut 45 derajat
