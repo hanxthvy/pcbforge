@@ -1,0 +1,282 @@
+# [xihanzu-NR]
+# Uji ujung ke ujung: susun board, jalankan DRC, tulis Gerber, periksa keluarannya.
+#
+# Board uji: pembagi tegangan dengan indikator LED. 40x25 mm, 5 komponen, 4 net.
+#
+# Titik jalur TIDAK ditulis angka mati. Semua diambil dari posisi pad yang dihitung
+# pustaka lewat cari_pad(), jadi kalau angka footprint berubah, uji ini ikut
+# menyesuaikan dan tetap menguji hal yang benar.
+#
+# Tata letak jalur di bawah ini sengaja diberi jarak. Versi pertamanya menyalip pad
+# kedua LED yang sama, dan DRC melaporkannya sebagai clearance negatif — itu
+# korsleting yang nyata, bukan kesalahan alat ukur. Perbaikannya ada di tata letak,
+# bukan di aturan DRC.
+
+import "fs" as fs
+
+from "./lib.mjs" import lib_get, lib_ada
+from "./units.mjs" import gabung_daftar
+from "./board.mjs" import board_baru, semua_pad, net_pin_tambah, cari_pad, cek_ukuran
+from "./drc.mjs" import periksa
+from "./gerber.mjs" import gerber_semua
+
+SALAH = 0
+
+
+def cek(nama, syarat, info):
+    if syarat:
+        print("  ok   " + nama + (" (" + info + ")" if info != "" else ""))
+    else:
+        print("  GAGAL " + nama + (" (" + info + ")" if info != "" else ""))
+        SALAH = SALAH + 1
+
+
+def tambah(b, ref, lib, x, y, nilai, rot):
+    # Ref selalu eksplisit. Versi yang menebak dari huruf pertama nama pustaka
+    # menghasilkan P1/R2/U3 yang tidak bisa ditebak.
+    b.parts.push({ ref: ref, lib: lib, nilai: nilai, x: x, y: y, rot: rot, side: "F" })
+    return ref
+
+
+def titik(b, ref, nomor):
+    pd = cari_pad(b, ref, nomor)
+    if pd == null:
+        print("  GAGAL: pad " + ref + "." + str(nomor) + " tidak ditemukan")
+        SALAH = SALAH + 1
+        return { x: 0, y: 0 }
+    return { x: pd.x, y: pd.y }
+
+
+def jalur(b, nama, layer, lebar, pts):
+    for n in b.nets:
+        if n.nama == nama:
+            n.trace.push({ layer: layer, lebar: lebar, pts: pts })
+
+
+def via(b, nama, x, y):
+    for n in b.nets:
+        if n.nama == nama:
+            n.via.push({ x: x, y: y, bor: 0.4, diameter: 0.8 })
+
+
+def board_uji():
+    b = board_baru("pcbforge-uji")
+    b.outline.lebar = 40
+    b.outline.tinggi = 25
+    b.outline.radius = 2
+
+    tambah(b, "J1", "PINHDR_1x02", 5, 12.5, "MASUK", 0)
+    tambah(b, "R1", "R_0805", 13, 7, "330R", 0)
+    tambah(b, "D1", "LED_0805", 13, 18, "MERAH", 0)
+    tambah(b, "R2", "R_0805", 24, 12.5, "1K", 0)
+    tambah(b, "J2", "PINHDR_1x02", 35, 12.5, "KELUAR", 0)
+
+    net_pin_tambah(b, "VCC", "J1", 1)
+    net_pin_tambah(b, "VCC", "R1", 1)
+    net_pin_tambah(b, "N1", "R1", 2)
+    net_pin_tambah(b, "N1", "D1", 1)
+    net_pin_tambah(b, "N2", "D1", 2)
+    net_pin_tambah(b, "N2", "R2", 1)
+    net_pin_tambah(b, "GND", "R2", 2)
+    net_pin_tambah(b, "GND", "J1", 2)
+    net_pin_tambah(b, "GND", "J2", 1)
+    net_pin_tambah(b, "GND", "J2", 2)
+    return b
+
+
+def board_berjalur():
+    # Board yang sudah berjalur lengkap. Dipakai untuk ekspor dan untuk uji DRC
+    # negatif (yang menyalinnya lalu merusak satu hal).
+    b = board_uji()
+    j1_1 = titik(b, "J1", 1)
+    j1_2 = titik(b, "J1", 2)
+    r1_1 = titik(b, "R1", 1)
+    r1_2 = titik(b, "R1", 2)
+    d1_1 = titik(b, "D1", 1)
+    d1_2 = titik(b, "D1", 2)
+    r2_1 = titik(b, "R2", 1)
+    r2_2 = titik(b, "R2", 2)
+    j2_1 = titik(b, "J2", 1)
+    j2_2 = titik(b, "J2", 2)
+
+    # VCC: J1.1 ke R1.1, mendatar dulu lalu menanjak.
+    jalur(b, "VCC", "F", 0.4, [j1_1, { x: 9, y: j1_1.y }, r1_1])
+
+    # N1 turun dari R1.2 ke D1.1, dan jalur ini HARUS melintasi VCC. Di board dua
+    # lapis, itulah gunanya via: pindah lapisan untuk melewati jalur lain, bukan
+    # memaksa satu jalur memutar. Percobaan sebelumnya hanya menggeser garis, dan
+    # hasilnya tetap korsleting dengan jalur VCC.
+    jalur(b, "N1", "B", 0.4, [r1_2, { x: r1_2.x, y: d1_1.y }, d1_1])
+    via(b, "N1", r1_2.x, r1_2.y)
+    via(b, "N1", d1_1.x, d1_1.y)
+
+    # N2: D1.2 ke R2.1, di lapisan atas, menjauh dari VCC.
+    jalur(b, "N2", "F", 0.4, [
+        d1_2, { x: 17, y: d1_2.y }, { x: 17, y: r2_1.y }, r2_1,
+    ])
+
+    # GND di lapisan bawah, lewat lubang tembus header dan via pada R2.2.
+    jalur(b, "GND", "B", 0.6, [j1_2, { x: j1_2.x, y: 21 }, { x: j2_2.x, y: 21 }, j2_2])
+    jalur(b, "GND", "B", 0.6, [r2_2, { x: r2_2.x, y: 21 }])
+    via(b, "GND", j1_2.x, j1_2.y)
+    via(b, "GND", j2_2.x, j2_2.y)
+    via(b, "GND", r2_2.x, r2_2.y)
+    return b
+
+
+def ada_jenis(temuan, jenis):
+    for t in temuan:
+        if t.jenis == jenis:
+            return true
+    return false
+
+
+def cek_footprint_karangan(b):
+    for e in cek_ukuran(b):
+        if e.indexOf("tidak ada di pustaka") > 0:
+            return true
+    return false
+
+
+def uji_drc_negatif():
+    # Setiap jenis pelanggaran harus benar-benar ditangkap, bukan hanya teori.
+    catat = {}
+
+    b = board_berjalur()
+    for n in b.nets:
+        if n.nama == "N1":
+            n.trace[0].lebar = 0.05
+    catat["trace kurus"] = ada_jenis(periksa(b), "lebar-trace")
+
+    b = board_berjalur()
+    b.parts.push({ ref: "R9", lib: "R_0805", nilai: "1K", x: 20, y: 20, rot: 0, side: "F" })
+    catat["pin tanpa net"] = ada_jenis(periksa(b), "pin-yatim")
+
+    b = board_berjalur()
+    for p in b.parts:
+        if p.ref == "R2":
+            p.x = 13.9
+            p.y = 7
+    catat["clearance"] = ada_jenis(periksa(b), "clearance")
+
+    b = board_berjalur()
+    for n in b.nets:
+        if n.nama == "GND" and n.via.length > 0:
+            n.via[0].bor = 0.2
+    catat["bor kecil"] = ada_jenis(periksa(b), "bor")
+
+    b = board_berjalur()
+    for p in b.parts:
+        if p.ref == "R2":
+            p.x = 38.5
+    catat["tepi board"] = ada_jenis(periksa(b), "tepi-board")
+
+    b = board_berjalur()
+    b.parts.push({ ref: "X9", lib: "TIDAK_ADA_LIB", nilai: "-", x: 20, y: 5,
+                   rot: 0, side: "F" })
+    catat["footprint karangan"] = cek_footprint_karangan(b)
+
+    return catat
+
+
+def uji_gerber():
+    b = board_berjalur()
+    berkas = gerber_semua(b)
+    cek("jumlah berkas Gerber", berkas.length == 10, str(berkas.length) + " berkas")
+    cek("berkas Excellon ikut", berkas[9].nama.indexOf(".drl") > 0, berkas[9].nama)
+
+    out = "/root/projects/pcbforge/build/out"
+    if fs.existsSync(out) == false:
+        fs.mkdirSync(out, { recursive: true })
+
+    fcu = ""
+    fcu_nama = ""
+    drl = berkas[9].isi
+    for f in berkas:
+        fs.writeFileSync(out + "/" + f.nama, f.isi)
+        if f.nama.indexOf("F_Cu") > 0:
+            fcu = f.isi
+            fcu_nama = f.nama
+
+    cek("F_Cu punya mode inci 2.6", fcu.indexOf("%FSLAX26Y26*%") >= 0, "")
+    cek("F_Cu punya satuan inci", fcu.indexOf("%MOIN*%") >= 0, "")
+    cek("F_Cu punya fungsi lapisan",
+        fcu.indexOf("%TF.FileFunction,Copper,L1,Top*%") >= 0, "")
+    cek("F_Cu punya aperture R (pad)", fcu.indexOf("R,") > 0, "")
+    cek("F_Cu punya flash D03", fcu.indexOf("D03*") > 0,
+        str(fcu.split('D03*').length - 1) + " flash")
+    cek("F_Cu punya draw D01", fcu.indexOf("D01*") > 0,
+        str(fcu.split('D01*').length - 1) + " draw")
+    cek("F_Cu ditutup M02", fcu.indexOf("M02*") > 0, "")
+
+    cek("Excellon punya kepala M48", drl.indexOf("M48") >= 0, "")
+    cek("Excellon satuan metrik", drl.indexOf("METRIC") >= 0, "")
+    cek("Excellon punya kode alat T", drl.indexOf("T1") >= 0, "")
+    cek("Excellon ditutup M30", drl.indexOf("M30") >= 0, "")
+
+    # Koordinat harus berada di dalam board. 40 mm = 1574803 satuan inci 2.6.
+    batas = Math.round((40 / 25.4) * 1000000) + 100
+    koor = fcu.split("X")
+    maks = 0
+    i = 1
+    while i < koor.length:
+        v = parseInt(koor[i])
+        if isNaN(v) == false and v > maks:
+            maks = v
+        i += 1
+    cek("koordinat X dalam board", maks < batas and maks > 0,
+        "maks=" + str(maks) + " batas=" + str(batas))
+
+    # Lapisan sablon bawah memang kosong: semua komponen duduk di sisi atas.
+    # Patokannya GEOMETRI (D01/D03), bukan panjang berkas: kepala tiap lapisan saja
+    # sudah lebih dari 60 karakter, jadi batas panjang tidak membedakan apa pun.
+    kosong = []
+    for f in berkas:
+        ada_geometri = f.isi.indexOf("D01*") > 0 or f.isi.indexOf("D03*") > 0
+        if ada_geometri == false:
+            kosong.push(f.nama)
+    # Yang memang boleh kosong: pasta bawah dan sablon bawah (semua komponen duduk di
+    # sisi atas), dan berkas bor (formatnya Excellon: lubang ditulis X/Y, bukan D01/D03).
+    # Tembaga dan mask bawah TIDAK boleh kosong: pad tembus header harus punya tembaga
+    # dan bukaan mask di kedua sisi. Versi pertama penulis Gerber menyaring komponen
+    # per sisi lebih dulu, jadi B_Cu kosong dan pabrik tidak bisa menyambung lubangnya.
+    cek("tembaga & mask bawah terisi, sisanya memang kosong",
+        kosong.length == 3, str(kosong.length) + " kosong: " + gabung_daftar(kosong, ","))
+    return fcu_nama
+
+
+def main():
+    b = board_berjalur()
+    cek("komponen terpasang", b.parts.length == 5, str(b.parts.length) + " komponen")
+    cek("net terbentuk", b.nets.length == 4, str(b.nets.length) + " net")
+
+    dp = semua_pad(b.parts[1], lib_get("R_0805"))
+    cek("pad R1 di posisi benar",
+        Math.abs(dp[0].x - 12.0875) < 0.0001 and Math.abs(dp[0].y - 7) < 0.0001,
+        "x=" + str(dp[0].x) + " y=" + str(dp[0].y))
+
+    temuan = periksa(b)
+    for t in temuan:
+        print("        > " + t.jenis + " | " + t.a + " <-> " + t.b + " @ " +
+              str(t.x) + "," + str(t.y) + " | " + t.pesan)
+    cek("DRC bersih untuk board yang benar", temuan.length == 0,
+        str(temuan.length) + " temuan")
+
+    catat = uji_drc_negatif()
+    for k in ["trace kurus", "pin tanpa net", "clearance", "bor kecil", "tepi board",
+              "footprint karangan"]:
+        cek("DRC menangkap " + k, catat[k] == true, "")
+
+    nama = uji_gerber()
+    print("        berkas: " + nama)
+
+    print("")
+    if SALAH > 0:
+        print("HASIL: " + str(SALAH) + " gagal")
+        return 1
+    print("HASIL: semua lulus")
+    return 0
+
+
+hasil = main()
+print("--- salah=" + str(hasil))
