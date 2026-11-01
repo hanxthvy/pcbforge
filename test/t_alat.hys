@@ -81,6 +81,20 @@ def utama():
     h = ratak(b, ["R1", "TIDAK_ADA"], "kiri")
     cek("ratak penanda tidak ada ditolak", h.pesan != "", h.pesan)
 
+    # "tengah" harus memakai RATA-RATA, bukan nilai komponen pertama. Dengan nilai
+    # pertama, dua komponen yang x-nya sama menumpuk persis di satu titik.
+    # Dipakai J1 (x=5) dan R1 (x=13): X-nya berbeda, jadi setelah Y disamakan pun
+    # keduanya tidak menumpuk. Memakai R1 dan D1 tidak sah untuk pemeriksaan tumpuk,
+    # karena X keduanya memang sudah sama — dan meratakan memang membuat yang sudah
+    # sejajar jadi bertumpuk. Itu perilaku yang benar, bukan cacat.
+    h = ratak(b, ["J1", "R1"], "tengah-x")
+    cek("ratak tengah berhasil", h.pesan == "", h.pesan)
+    yj1 = pos(h.b, "J1").y
+    yr1 = pos(h.b, "R1").y
+    cek("rata-rata, bukan nilai pertama", Math.abs(yj1 - 9.75) < 0.01, str(yj1))
+    cek("keduanya sejajar", Math.abs(yj1 - yr1) < 0.01, str(yj1) + " vs " + str(yr1))
+    cek("X tidak ikut berubah", Math.abs(pos(h.b, "J1").x - 5) < 0.01, str(pos(h.b, "J1").x))
+
     # ---- bagi rata ----
     h = bagi_rata(b, ["J1", "R1", "R2", "J2"], "datar")
     cek("bagi rata berhasil", h.pesan == "", h.pesan)

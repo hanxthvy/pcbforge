@@ -31,6 +31,7 @@ from "./core/kit.hys" import bom, cpl, panduan
 from "./core/zip.hys" import zip_buat
 from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran
 from "./core/zone.hys" import zona_tambah, zona_hapus
+from "./core/alat.hys" import part_kunci, part_buka, grup_buat, grup_lepas, grup_anggota, ratak, bagi_rata, teks_tambah, keepout_tambah
 
 
 def bulat2(v):
@@ -187,6 +188,42 @@ def h_zona_hapus(b, setB, setPesan, net, layer):
         setB(h.b)
 
 
+def h_kunci(b, setB, setPesan, ref, kunci):
+    h = part_kunci(b, ref) if kunci else part_buka(b, ref)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_ratak(b, setB, setPesan, cara):
+    anggota = []
+    for p in b.parts:
+        anggota.push(p.ref)
+    h = ratak(b, anggota, cara)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_bagi(b, setB, setPesan, cara):
+    anggota = []
+    for p in b.parts:
+        anggota.push(p.ref)
+    h = bagi_rata(b, anggota, cara)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_teks(b, setB, setPesan, isi, x, y, tinggi, layer):
+    h = teks_tambah(b, isi, x, y, tinggi, layer)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_keepout(b, setB, setPesan, x1, y1, x2, y2, layer):
+    h = keepout_tambah(b, x1, y1, x2, y2, layer, "")
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
 def h_nilai(b, setB, ref, nilai):
     p = cari_part(b, ref)
     if p != null:
@@ -274,7 +311,7 @@ component PanelPustaka(taruh):
             p(className="dim kecil"): "Tidak ada yang cocok."
 
 
-component PanelProperti(b, terpilih, geser, putar, sisi, hapus, netkan, setNilai):
+component PanelProperti(b, terpilih, geser, putar, sisi, hapus, netkan, setNilai, kunci):
     p = cari_part(b, terpilih) if terpilih != null else null
     div:
         if p == null:
@@ -422,6 +459,18 @@ component BarisLapisan(nama, warna, aktif, tampil, klikNama, klikMata):
             span(className="tanda-aktif"): "aktif"
 
 
+def jumlah_teks(b):
+    if b.teks == undefined:
+        return 0
+    return b.teks.length
+
+
+def jumlah_keepout(b):
+    if b.keepout == undefined:
+        return 0
+    return b.keepout.length
+
+
 def jumlah_jalur(b):
     n = 0
     for x in b.nets:
@@ -501,6 +550,7 @@ component Editor():
     [sorot, setSorot] = useState("")
     [warnaLapisan, setWarnaLapisan] = useState({ F: "#e8b55c", B: "#5b8dee", S: "#e2e8f0", E: "#e8d96a" })
     [tampil3d, setTampil3d] = useState(false)
+    [teksBaru, setTeksBaru] = useState("")
 
     kanvasRef = useRef(null)
     alatRef = useRef(null)
@@ -615,6 +665,26 @@ component Editor():
                 Kartu(judul="Net"):
                     PanelNet(b=b, netAktif=netAktif, setNetAktif=setNetAktif,
                              tambah=lambda nama: h_net_baru(b, setB, setNetAktif, setPesan, nama))
+                Kartu(judul="Susun komponen"):
+                    p(className="dim kecil"): "Bekerja atas semua komponen yang ada."
+                    div(className="tombol-deret"):
+                        button(className="kecil-tombol", onClick=lambda: h_ratak(b, setB, setPesan, "kiri"), title="Ratakan tepi kiri"): "Kiri"
+                        button(className="kecil-tombol", onClick=lambda: h_ratak(b, setB, setPesan, "atas"), title="Ratakan tepi atas"): "Atas"
+                        button(className="kecil-tombol", onClick=lambda: h_ratak(b, setB, setPesan, "tengah-x"), title="Ratakan sumbu mendatar"): "Sejajar"
+                    div(className="tombol-deret"):
+                        button(className="kecil-tombol", onClick=lambda: h_bagi(b, setB, setPesan, "datar"), title="Jarak sama mendatar"): "Bagi datar"
+                        button(className="kecil-tombol", onClick=lambda: h_bagi(b, setB, setPesan, "tegak"), title="Jarak sama tegak"): "Bagi tegak"
+                Kartu(judul="Teks sablon dan keepout"):
+                    div(className="masuk-baris"):
+                        input(className="masuk", placeholder="Tulisan di sablon", value=teksBaru,
+                              onChange=lambda ev: setTeksBaru(ev.target.value))
+                        button(className="kecil-tombol", onClick=lambda: (h_teks(b, setB, setPesan, teksBaru, 3, b.outline.tinggi - 3, 1.2, "F"), setTeksBaru(""))):
+                            "Tambah"
+                    p(className="dim kecil"):
+                        f"{jumlah_teks(b)} tulisan, {jumlah_keepout(b)} area terlarang"
+                    div(className="tombol-deret"):
+                        button(className="kecil-tombol", onClick=lambda: h_keepout(b, setB, setPesan, 1, 1, 6, 6, "F")):
+                            "Keepout 5×5 mm"
                 Kartu(judul="Zona tembaga"):
                     div(className="daftar-gulir pendek"):
                         for z in b.zones:
@@ -694,6 +764,7 @@ component Editor():
                             geser=lambda ref, dx, dy: h_geser(b, setB, setPesan, ref, dx, dy),
                             putar=lambda ref, d: h_putar(b, setB, setPesan, ref, d),
                             sisi=lambda ref: h_sisi(b, setB, setPesan, ref),
+                            kunci=lambda ref, k: h_kunci(b, setB, setPesan, ref, k),
                             hapus=lambda ref: h_hapus(b, setB, setTerpilih, setPesan, ref),
                             netkan=lambda ref, nama: h_net_komponen(b, setB, setPesan, ref, nama),
                             setNilai=lambda ref, v: h_nilai(b, setB, ref, v))

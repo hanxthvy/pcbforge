@@ -196,9 +196,16 @@ export def kunci_ratak(cara):
 
 
 export def pertama(b, anggota, cara):
+    # Nilai acuan untuk meratakan.
+    #
+    # "tengah" memakai RATA-RATA, dan itu penting: versi pertama tidak menghitungnya
+    # sama sekali, jadi nilainya jatuh ke komponen pertama dalam daftar. Akibatnya dua
+    # komponen yang x-nya kebetulan sama menumpuk di satu titik persis, dan itu
+    # kerusakan yang tidak terlihat sampai board-nya dicetak.
     s = kunci_ratak(cara)
     sumbu = s[0]
     nilai = 0
+    jumlah = 0
     mulai = false
     for q in b.parts:
         for r in anggota:
@@ -207,13 +214,18 @@ export def pertama(b, anggota, cara):
             v = q.y
             if sumbu == "x":
                 v = q.x
-            if mulai == false:
+            if s[1] == "tengah":
+                nilai += v
+                jumlah += 1
+            elif mulai == false:
                 nilai = v
                 mulai = true
             elif s[1] == "min" and v < nilai:
                 nilai = v
             elif s[1] == "max" and v > nilai:
                 nilai = v
+    if s[1] == "tengah" and jumlah > 0:
+        return nilai / jumlah
     return nilai
 
 
