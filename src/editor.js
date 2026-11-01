@@ -20,6 +20,7 @@
 // menyelesaikan jalur .hys adalah plugin Hydra. Akhiran .mjs hanya dipakai oleh
 // mesin inti saat diuji langsung di Node (lihat tools/core.sh).
 import { semua_pad } from './core/board.hys'
+import { zona_untuk, zona_sambung } from './core/zone.hys'
 import { lib_get } from './core/lib.hys'
 
 // Warna lapisan, dan bisa diubah pengguna. Nilai bawaannya sengaja sama dengan
@@ -62,7 +63,7 @@ export function papan_alat(kanvas, opsi) {
     // pasti ada, dan yang tidak sampai berubah jadi pesan yang terlihat, bukan mati
     // tanpa jejak.
     const G = {}
-    for (const k of ['ubah', 'pindah', 'hapusRef', 'gambarJalur', 'pilih', 'pesan', 'koor']) {
+    for (const k of ['ubah', 'pindah', 'hapusRef', 'gambarJalur', 'gambarZona', 'pilih', 'pesan', 'koor']) {
         const f = opsi[k]
         G[k] = typeof f === 'function' ? f : ((...args) => {
             if (k !== 'pesan') {
@@ -92,6 +93,12 @@ export function papan_alat(kanvas, opsi) {
         snap: true,
         tanda: [],
         rats: [],
+        zonaBaru: null,
+        tampil3d: false,
+        yaw: -0.6,
+        pitch: 0.95,
+        skala3d: 10,
+        pusat3d: { x: 0, y: 0 },
         sorot: '',
         ukur: null,
         modeUkur: null,
@@ -171,6 +178,189 @@ export function papan_alat(kanvas, opsi) {
         a.gambar()
     }
 
+    // ---------- tampilan 3D ----------
+    //
+    // Bukan pemandangan fotorealistis, dan tidak berusaha jadi. Yang dilakukan:
+    // memproyeksikan papan dan komponen ke sudut miring, dengan TINGGI ASLI tiap
+    // paket dari pustaka. Itu menjawab pertanyaan yang tidak bisa dijawab tampilan
+    // datar: apa yang menonjol, apa yang bertabrakan, seberapa tinggi board ini.
+    //
+    // Sengaja tanpa pustaka 3D. Proyeksi sendiri cukup untuk kebutuhan itu, jalan
+    // tanpa unduhan tambahan, dan tidak menambah bobot halaman.
+
+    a.putar3d = () => {
+        // Putaran pandangan saat diseret di mode 3D.
+        return { yaw: a.yaw, pitch: a.pitch }
+    }
+
+    a.proyeksi = (x, y, z) => {
+        const cy = Math.cos(a.yaw)
+        const sy = Math.sin(a.yaw)
+        const cp = Math.cos(a.pitch)
+        const sp = Math.sin(a.pitch)
+        // titik tengah board jadi pusat putaran
+        const cx = x - a.b.outline.lebar / 2
+        const cyy = y - a.b.outline.tinggi / 2
+        const rx = cx * cy - cyy * sy
+        const ry = cx * sy + cyy * cy
+        const layarX = rx * a.skala3d
+        const layarY = ry * cp * a.skala3d - z * sp * a.skala3d
+        return { x: layarX + a.pusat3d.x, y: layarY + a.pusat3d.y }
+    }
+
+    a.gambar3d = () => {
+        const b = a.b
+        if (b === null || b.outline === undefined) return
+        const ctx = kanvas.getContext('2d')
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.fillStyle = '#0a0c11'
+        ctx.fillRect(0, 0, kanvas.width, kanvas.height)
+        ctx.setTransform(a.rasio, 0, 0, a.rasio, 0, 0)
+
+        const lebar = b.outline.lebar
+        const tinggi = b.outline.tinggi
+        const tebal = 1.6
+        const P = a.proyeksi
+
+        // sisi papan dulu, supaya permukaan atas menimpanya
+        const bawah = [
+            P(0, 0, 0), P(lebar, 0, 0), P(lebar, tinggi, 0), P(0, tinggi, 0),
+        ]
+        ctx.fillStyle = '#0a2a1e'
+        ctx.beginPath()
+        ctx.moveTo(bawah[0].x, bawah[0].y)
+        for (let i = 1; i < bawah.length; i += 1) ctx.lineTo(bawah[i].x, bawah[i].y)
+        ctx.closePath()
+        ctx.fill()
+
+        // sisi muka papan
+        const atasDepan = [P(0, tinggi, -tebal), P(lebar, tinggi, -tebal)]
+        const bawahDepan = [P(0, tinggi, 0), P(lebar, tinggi, 0)]
+        ctx.fillStyle = '#0d3b2a'
+        ctx.beginPath()
+        ctx.moveTo(atasDepan[0].x, atasDepan[0].y)
+        ctx.lineTo(atasDepan[1].x, atasDepan[1].y)
+        ctx.lineTo(bawahDepan[1].x, bawahDepan[1].y)
+        ctx.lineTo(bawahDepan[0].x, bawahDepan[0].y)
+        ctx.closePath()
+        ctx.fill()
+
+        // permukaan atas
+        const atas = [
+            P(0, 0, -tebal), P(lebar, 0, -tebal), P(lebar, tinggi, -tebal), P(0, tinggi, -tebal),
+        ]
+        ctx.fillStyle = '#14543a'
+        ctx.strokeStyle = '#5fd39a'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(atas[0].x, atas[0].y)
+        for (let i = 1; i < atas.length; i += 1) ctx.lineTo(atas[i].x, atas[i].y)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+
+        // jalur: digambar di permukaan, mengikuti proyeksi
+        for (const lap of ['B', 'F']) {
+            if (lap === 'B' && a.tampilBawah === false) continue
+            if (lap === 'F' && a.tampilAtas === false) continue
+            const zLapis = lap === 'F' ? -tebal - 0.04 : -0.02
+            for (const n of b.nets) {
+                for (const t of n.trace) {
+                    if (t.layer !== lap) continue
+                    ctx.strokeStyle = lap === 'F' ? '#e8b55c' : '#5b8dee'
+                    ctx.lineWidth = Math.max(1, t.lebar * a.skala3d * 0.55)
+                    ctx.lineCap = 'round'
+                    ctx.beginPath()
+                    let i = 0
+                    while (i < t.pts.length) {
+                        const q = P(t.pts[i].x, t.pts[i].y, zLapis)
+                        if (i === 0) ctx.moveTo(q.x, q.y)
+                        else ctx.lineTo(q.x, q.y)
+                        i += 1
+                    }
+                    ctx.stroke()
+                }
+            }
+        }
+
+        // via: cincin kecil di antara kedua sisi, jadi terlihat menembus papan
+        for (const n of b.nets) {
+            for (const v of n.via) {
+                const atasVia = P(v.x, v.y, -tebal - 0.05)
+                const bawahVia = P(v.x, v.y, 0.02)
+                ctx.strokeStyle = '#c3cbdb'
+                ctx.lineWidth = Math.max(2, v.diameter * a.skala3d * 0.5)
+                ctx.beginPath()
+                ctx.moveTo(atasVia.x, atasVia.y)
+                ctx.lineTo(bawahVia.x, bawahVia.y)
+                ctx.stroke()
+                ctx.fillStyle = '#0f1115'
+                ctx.beginPath()
+                ctx.arc(atasVia.x, atasVia.y, Math.max(1.2, v.bor / 2 * a.skala3d * 0.5), 0, Math.PI * 2)
+                ctx.fill()
+            }
+        }
+
+        // komponen: kotak dengan tinggi ASLI dari pustaka
+        for (const p of b.parts) {
+            const lb = lib_get(p.lib)
+            if (lb === null) continue
+            const h = lb.tinggi || 1
+            const hw = lb.w / 2
+            const hh = lb.h / 2
+            const sudut = [
+                [p.x - hw, p.y - hh], [p.x + hw, p.y - hh],
+                [p.x + hw, p.y + hh], [p.x - hw, p.y + hh],
+            ]
+            const kaki = []
+            const kepala = []
+            for (const c of sudut) {
+                kaki.push(P(c[0], c[1], -tebal))
+                kepala.push(P(c[0], c[1], -tebal - h))
+            }
+            // badan komponen
+            ctx.fillStyle = '#26303f'
+            ctx.strokeStyle = '#8fa0bb'
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(kepala[0].x, kepala[0].y)
+            for (let i = 1; i < kepala.length; i += 1) ctx.lineTo(kepala[i].x, kepala[i].y)
+            ctx.closePath()
+            ctx.fill()
+            ctx.stroke()
+            // satu sisi supaya terlihat berketinggian
+            ctx.fillStyle = '#1b2431'
+            ctx.beginPath()
+            ctx.moveTo(kepala[3].x, kepala[3].y)
+            ctx.lineTo(kepala[2].x, kepala[2].y)
+            ctx.lineTo(kaki[2].x, kaki[2].y)
+            ctx.lineTo(kaki[3].x, kaki[3].y)
+            ctx.closePath()
+            ctx.fill()
+            ctx.stroke()
+            // pad di permukaan
+            for (const pd of semua_pad(p, lb)) {
+                const c = P(pd.x, pd.y, -tebal - 0.02)
+                ctx.fillStyle = '#f0d78c'
+                ctx.beginPath()
+                ctx.arc(c.x, c.y, Math.max(1.5, Math.max(pd.w, pd.h) / 2 * a.skala3d * 0.5), 0, Math.PI * 2)
+                ctx.fill()
+            }
+            // penanda
+            const lt = P(p.x, p.y, -tebal - h - 0.4)
+            ctx.fillStyle = '#cfe0ff'
+            ctx.font = '10px ui-sans-serif, system-ui, sans-serif'
+            ctx.textAlign = 'center'
+            ctx.fillText(p.ref, lt.x, lt.y)
+            ctx.textAlign = 'left'
+        }
+
+        // keterangan sudut pandang
+        ctx.fillStyle = 'rgba(226,232,240,0.6)'
+        ctx.font = '11px ui-sans-serif, system-ui, sans-serif'
+        ctx.fillText('Tampak 3D · seret untuk memutar', 12, 20)
+    }
+
     // ---------- menggambar ----------
 
     a.gambar = () => {
@@ -180,6 +370,10 @@ export function papan_alat(kanvas, opsi) {
         // terjadi saat board belum terpasang, jadi halamannya mati dengan
         // "Cannot read properties of undefined (reading 'lebar')".
         if (b === null || b === undefined || b.outline === undefined) return
+        if (a.tampil3d) {
+            a.gambar3d()
+            return
+        }
         const ctx = kanvas.getContext('2d')
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.fillStyle = W.bg
@@ -221,6 +415,37 @@ export function papan_alat(kanvas, opsi) {
         ctx.rect(kiri.x, kiri.y, wBoard, hBoard)
         ctx.fill()
         ctx.stroke()
+
+        // Zona tembaga: digambar lebih dulu, di bawah semua tembaga lain.
+        //
+        // Bidangnya tembus pandang supaya apa yang ada di atasnya tetap terbaca. Ini
+        // yang membuat board dua lapis dengan bidang ground bisa dibaca di layar,
+        // bukan hanya di berkas Gerber.
+        const lapZona = []
+        if (a.tampilAtas) lapZona.push('F')
+        if (a.tampilBawah) lapZona.push('B')
+        for (const lap of lapZona) {
+        for (const z of zona_untuk(b, lap)) {
+            const p1 = a.keLayar(z.x1, z.y1)
+            const p2 = a.keLayar(z.x2, z.y2)
+            ctx.fillStyle = z.layer === 'F' ? 'rgba(232,181,92,0.20)' : 'rgba(91,141,238,0.20)'
+            ctx.fillRect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y)
+            ctx.strokeStyle = z.layer === 'F' ? 'rgba(232,181,92,0.55)' : 'rgba(91,141,238,0.55)'
+            ctx.lineWidth = 1
+            ctx.setLineDash([3, 3])
+            ctx.strokeRect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y)
+            ctx.setLineDash([])
+            // pad yang tersambung ke zona ini ditandai: itu yang membuat ground nyata
+            for (const sp of zona_sambung(b, z)) {
+                const c = a.keLayar(sp.x, sp.y)
+                ctx.strokeStyle = '#6ee7a8'
+                ctx.lineWidth = 2
+                ctx.beginPath()
+                ctx.arc(c.x, c.y, Math.max(4, Math.max(sp.w, sp.h) / 2 * a.skala + 2), 0, Math.PI * 2)
+                ctx.stroke()
+            }
+        }
+        }
 
         // Garis bantu ratsnest: sambungan yang BELUM dibuat.
         //
@@ -405,6 +630,21 @@ export function papan_alat(kanvas, opsi) {
             ctx.fillText(label, tengah.x - w / 2, tengah.y - 7)
         }
 
+        // persegi zona yang sedang diseret
+        if (a.zonaBaru !== null) {
+            const p1 = a.keLayar(a.zonaBaru.x1, a.zonaBaru.y1)
+            const p2 = a.keLayar(a.zonaBaru.x2, a.zonaBaru.y2)
+            ctx.fillStyle = 'rgba(110,231,168,0.22)'
+            ctx.fillRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y),
+                         Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y))
+            ctx.strokeStyle = '#6ee7a8'
+            ctx.lineWidth = 1.5
+            ctx.setLineDash([4, 3])
+            ctx.strokeRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y),
+                           Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y))
+            ctx.setLineDash([])
+        }
+
         // penunjuk kursor
         if (a.kursor !== null && a.mode === 'jalur') {
             const c = a.keLayar(a.kursor.x, a.kursor.y)
@@ -446,9 +686,22 @@ export function papan_alat(kanvas, opsi) {
             kanvas.style.cursor = 'grabbing'
             return
         }
+        if (a.tampil3d) {
+            // Di tampilan 3D, seret berarti memutar pandangan.
+            geserKanvas = { x: ev.clientX, y: ev.clientY, putar3d: true }
+            return
+        }
         const p = a.titik(ev)
         const st = G.status()
 
+        if (a.mode === 'zona') {
+            // Seret persegi untuk membuat bidang tembaga. Sudut pertama di sini,
+            // sudut kedua saat tetikus dilepas.
+            const q = a.snapTitik(p)
+            a.zonaBaru = { x1: q.x, y1: q.y, x2: q.x, y2: q.y, net: st.net, layer: st.layer }
+            a.gambar()
+            return
+        }
         if (a.mode === 'hapus') {
             const ref = a.komponenDi(p)
             if (ref !== null) G.hapusRef(ref)
@@ -509,6 +762,14 @@ export function papan_alat(kanvas, opsi) {
         // menyimpan nilai ini di state setiap gerakan (itu memicu render ulang penuh).
         G.koor(s)
         if (geserKanvas !== null) {
+            if (geserKanvas.putar3d) {
+                a.yaw += (ev.clientX - geserKanvas.x) * 0.01
+                a.pitch = Math.max(0.15, Math.min(1.5, a.pitch + (ev.clientY - geserKanvas.y) * 0.008))
+                geserKanvas.x = ev.clientX
+                geserKanvas.y = ev.clientY
+                a.gambar()
+                return
+            }
             a.geserX = ev.clientX - geserKanvas.x
             a.geserY = ev.clientY - geserKanvas.y
             a.gambar()
@@ -522,6 +783,12 @@ export function papan_alat(kanvas, opsi) {
                 q.x = s.x + sedangPindah.dx
                 q.y = s.y + sedangPindah.dy
             }
+            a.gambar()
+            return
+        }
+        if (a.mode === 'zona' && a.zonaBaru !== null) {
+            a.zonaBaru.x2 = s.x
+            a.zonaBaru.y2 = s.y
             a.gambar()
             return
         }
@@ -549,6 +816,13 @@ export function papan_alat(kanvas, opsi) {
         if (geserKanvas !== null) {
             geserKanvas = null
             kanvas.style.cursor = a.mode === 'jalur' ? 'crosshair' : 'default'
+            return
+        }
+        if (a.zonaBaru !== null) {
+            const z = a.zonaBaru
+            a.zonaBaru = null
+            a.gambar()
+            G.gambarZona(z.net, z.layer, z.x1, z.y1, z.x2, z.y2)
             return
         }
         if (sedangPindah !== null) {
@@ -674,8 +948,9 @@ export function papan_alat(kanvas, opsi) {
 
     a.setMode = (m) => {
         if (a.mode === 'jalur' && m !== 'jalur') a.selesaiJalur()
+        if (a.mode === 'zona' && m !== 'zona') a.zonaBaru = null
         a.mode = m
-        kanvas.style.cursor = m === 'jalur' ? 'crosshair'
+        kanvas.style.cursor = (m === 'jalur' || m === 'zona') ? 'crosshair'
             : (m === 'hapus' ? 'not-allowed' : 'default')
     }
 
@@ -687,6 +962,18 @@ export function papan_alat(kanvas, opsi) {
     }
 
     a.keTitikTengah = () => a.paskan()
+
+    a.set3d = (nyala) => {
+        a.tampil3d = nyala
+        if (nyala) {
+            // Paskan skala supaya seluruh board masuk layar pada sudut awal.
+            const b = a.b
+            const m = Math.max(b.outline.lebar, b.outline.tinggi)
+            a.skala3d = Math.min((a.lebarCss - 40) / m, (a.tinggiCss - 40) / m) * 0.85
+            a.pusat3d = { x: a.lebarCss / 2, y: a.tinggiCss / 2 }
+        }
+        a.gambar()
+    }
 
     a.setKisi = (g, snap) => {
         a.kisi = g

@@ -30,6 +30,7 @@ from "./core/gerber.hys" import gerber_semua
 from "./core/kit.hys" import bom, cpl, panduan
 from "./core/zip.hys" import zip_buat
 from "./core/cmd.hys" import part_tambah, part_hapus, part_pindah, part_putar, part_sisi, net_tambah, net_pin, jalur_tambah, board_ukuran
+from "./core/zone.hys" import zona_tambah, zona_hapus
 
 
 def bulat2(v):
@@ -174,6 +175,18 @@ def h_jalur(b, setB, setPesan, net, layer, lebar, pts):
         setB(h.b)
 
 
+def h_zona(b, setB, setPesan, net, layer, x1, y1, x2, y2):
+    h = zona_tambah(b, net, layer, x1, y1, x2, y2, 0.3)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
+def h_zona_hapus(b, setB, setPesan, net, layer):
+    h = zona_hapus(b, net, layer)
+    if h_pesan(h, setPesan):
+        setB(h.b)
+
+
 def h_nilai(b, setB, ref, nilai):
     p = cari_part(b, ref)
     if p != null:
@@ -207,6 +220,8 @@ def sambung_alat(kanvas, rujukan, setTerpilih, setPesan, setB):
             part_hapus(rujukan.current.b(), ref), false),
         gambarJalur: lambda net, lap, lb, pts: rujukan.current.pakai(
             jalur_tambah(rujukan.current.b(), net, lap, lb, pts), false),
+        gambarZona: lambda net, lap, x1, y1, x2, y2: rujukan.current.pakai(
+            zona_tambah(rujukan.current.b(), net, lap, x1, y1, x2, y2, 0.3), false),
         pilih: lambda ref: rujukan.current.pilih(ref),
         status: lambda: rujukan.current.status(),
         pesan: lambda m: rujukan.current.lihat(m),
@@ -485,6 +500,7 @@ component Editor():
     [rats, setRats] = useState([])
     [sorot, setSorot] = useState("")
     [warnaLapisan, setWarnaLapisan] = useState({ F: "#e8b55c", B: "#5b8dee", S: "#e2e8f0", E: "#e8d96a" })
+    [tampil3d, setTampil3d] = useState(false)
 
     kanvasRef = useRef(null)
     alatRef = useRef(null)
@@ -518,6 +534,7 @@ component Editor():
     useEffect(lambda: hitung_rats(alatRef.current, b, setRats), [b])
     useEffect(lambda: set_sorot(alatRef.current, sorot), [sorot])
     useEffect(lambda: warnai(alatRef.current, warnaLapisan), [warnaLapisan])
+    useEffect(lambda: atur_3d(alatRef.current, tampil3d), [tampil3d])
 
     div(className="kerja"):
         header(className="kerja-kepala"):
@@ -526,6 +543,11 @@ component Editor():
                 span(className="kepala-info dim kecil"):
                     f"{b.outline.lebar}×{b.outline.tinggi} mm · {b.parts.length} komponen · {b.nets.length} net"
             div(className="kepala-kanan"):
+                div(className="segmen"):
+                    button(className=("seg" + (" aktif" if not tampil3d else "")),
+                           onClick=lambda: setTampil3d(false)): "2D"
+                    button(className=("seg" + (" aktif" if tampil3d else "")),
+                           onClick=lambda: setTampil3d(true)): "3D"
                 button(className="kecil-tombol", onClick=lambda: muat_contoh(setB, setTerpilih, setPesan)):
                     "Muat contoh"
                 button(className="kecil-tombol", onClick=lambda: kosongkan(setB, setTerpilih, setPesan)):
@@ -559,6 +581,8 @@ component Editor():
                                onClick=lambda: setMode("hapus"), title="Hapus komponen (X)"): "Hapus"
                         button(className=("seg" + (" aktif" if mode == "ukur" else "")),
                                onClick=lambda: setMode("ukur"), title="Ukur jarak (M)"): "Ukur"
+                        button(className=("seg" + (" aktif" if mode == "zona" else "")),
+                               onClick=lambda: setMode("zona"), title="Bidang tembaga (Z)"): "Zona"
                     if mode == "jalur":
                         div(className="masuk-baris"):
                             label(className="label"): "Lapisan"
@@ -578,6 +602,10 @@ component Editor():
                             p(className="dim kecil"):
                                 f"Masuk ke net {netAktif}, lapisan {layer}. Klik untuk "
                                 "menambah titik; klik ganda atau klik kanan untuk selesai."
+                    elif mode == "zona":
+                        p(className="dim kecil"):
+                            "Seret persegi di kanvas untuk membuat bidang tembaga. "
+                            "Net dan lapisan diambil dari pilihan di atas."
                     else:
                         p(className="dim kecil"):
                             "Klik komponen untuk memilih, geser untuk memindah. "
@@ -587,6 +615,20 @@ component Editor():
                 Kartu(judul="Net"):
                     PanelNet(b=b, netAktif=netAktif, setNetAktif=setNetAktif,
                              tambah=lambda nama: h_net_baru(b, setB, setNetAktif, setPesan, nama))
+                Kartu(judul="Zona tembaga"):
+                    div(className="daftar-gulir pendek"):
+                        for z in b.zones:
+                            div(className="baris"):
+                                span(className="kunci"): z.net + " · " + ("atas" if z.layer == "F" else "bawah")
+                                span(className="nilai kecil"):
+                                    f"{Math.round(z.x2 - z.x1)}×{Math.round(z.y2 - z.y1)} mm"
+                                button(className="kecil-tombol bahaya",
+                                       onClick=lambda: h_zona_hapus(b, setB, setPesan, z.net, z.layer)):
+                                    "Hapus"
+                    if b.zones.length == 0:
+                        p(className="dim kecil"):
+                            "Belum ada bidang tembaga. Bidang ground hampir selalu dipakai "
+                            "di board dua lapis."
                 Kartu(judul="Ukuran board"):
                     div(className="masuk-baris"):
                         label(className="label"): "Lebar (mm)"
@@ -705,6 +747,11 @@ def hitung_rats(alat, b, setRats):
     if alat != null:
         alat.setRats(r)
     setRats(r)
+
+
+def atur_3d(alat, nyala):
+    if alat != null:
+        alat.set3d(nyala)
 
 
 def set_sorot(alat, nama):
@@ -878,6 +925,8 @@ def pasang_tombol(rujukan, setMode, setTerpilih, setB, setPesan):
             setMode("hapus")
         elif k == "m":
             setMode("ukur")
+        elif k == "z":
+            setMode("zona")
         elif k == "r" and st.terpilih != null:
             rujukan.current.pakai(part_putar(rujukan.current.b(), st.terpilih, 90), false)
         elif k == "delete" and st.terpilih != null:
